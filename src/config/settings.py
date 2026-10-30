@@ -9,3 +9,5 @@ ALLOWED_EXTENSIONS = tuple(
 )
 
 APP_ENV = os.getenv("APP_ENV", "dev")
+
+DATA_DIR = os.getenv("DATA_DIR", "data")
