@@ -1,19 +1,16 @@
-import json
-
 import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from api.dependencies import TempFileUploadSink
+from infra.sqlite_repository import SQLiteContractRepository
 
 PDF = b"%PDF-1.7\nhello"
 
 
 @pytest.fixture()
-def client_and_sink(tmp_path):
-    sink = TempFileUploadSink(root=tmp_path)
-    with TestClient(create_app(sink=sink)) as client:
-        yield client, sink
+def client(tmp_path):
+    with TestClient(create_app(repository=SQLiteContractRepository(tmp_path))) as http:
+        yield http
 
 
 def _post_pdf(client: TestClient, filename: str = "contract.pdf"):
@@ -22,9 +19,7 @@ def _post_pdf(client: TestClient, filename: str = "contract.pdf"):
     )
 
 
-def test_post_contract_returns_201_with_all_fields(client_and_sink):
-    client, _ = client_and_sink
-
+def test_post_contract_returns_201_with_all_fields(client):
     response = _post_pdf(client)
 
     assert response.status_code == 201
@@ -39,8 +34,7 @@ def test_post_contract_returns_201_with_all_fields(client_and_sink):
     assert body["created_at"]
 
 
-def test_post_duplicate_returns_409(client_and_sink):
-    client, _ = client_and_sink
+def test_post_duplicate_returns_409(client):
     assert _post_pdf(client).status_code == 201
 
     response = _post_pdf(client, filename="again.pdf")
@@ -49,9 +43,7 @@ def test_post_duplicate_returns_409(client_and_sink):
     assert "sha256" in response.json()["detail"]
 
 
-def test_post_invalid_file_returns_422(client_and_sink):
-    client, _ = client_and_sink
-
+def test_post_invalid_file_returns_422(client):
     response = client.post(
         "/contracts",
         files={"file": ("malware.exe", b"contents", "application/octet-stream")},
@@ -61,29 +53,51 @@ def test_post_invalid_file_returns_422(client_and_sink):
     assert ".exe" in response.json()["detail"]
 
 
-def test_get_existing_contract_returns_200(client_and_sink):
-    client, _ = client_and_sink
+def test_get_existing_and_missing_contract(client):
     created = _post_pdf(client).json()
 
     response = client.get(f"/contracts/{created['contract_id']}")
 
     assert response.status_code == 200
     assert response.json() == created
+    assert client.get("/contracts/does-not-exist").status_code == 404
 
 
-def test_get_missing_contract_returns_404(client_and_sink):
-    client, _ = client_and_sink
+def test_list_contracts_paginates(client):
+    created = []
+    for index in range(3):
+        response = client.post(
+            "/contracts",
+            files={
+                "file": (
+                    f"contract-{index}.txt",
+                    f"content-{index}".encode(),
+                    "text/plain",
+                )
+            },
+        )
+        assert response.status_code == 201
+        created.append(response.json()["contract_id"])
 
-    response = client.get("/contracts/does-not-exist")
+    assert len(client.get("/contracts").json()) == 3
+    page1 = client.get("/contracts", params={"limit": 2}).json()
+    page2 = client.get("/contracts", params={"limit": 2, "offset": 2}).json()
 
-    assert response.status_code == 404
+    assert len(page1) == 2
+    assert len(page2) == 1
+    assert {item["contract_id"] for item in page1 + page2} == set(created)
 
 
-def test_metadata_json_matches_post_response(client_and_sink):
-    client, sink = client_and_sink
-    created = _post_pdf(client).json()
+@pytest.mark.parametrize("params", [{"limit": 101}, {"limit": 0}, {"offset": -1}])
+def test_list_rejects_invalid_pagination(client, params):
+    assert client.get("/contracts", params=params).status_code == 422
 
-    metadata_path = sink.root / created["sha256"][:12] / "metadata.json"
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 
-    assert metadata == created
+def test_restart_keeps_contracts_visible(tmp_path):
+    with TestClient(create_app(repository=SQLiteContractRepository(tmp_path))) as first:
+        created = _post_pdf(first).json()
+
+    with TestClient(create_app(repository=SQLiteContractRepository(tmp_path))) as reopened:
+        assert reopened.get(f"/contracts/{created['contract_id']}").status_code == 200
+        listed = reopened.get("/contracts").json()
+        assert [item["contract_id"] for item in listed] == [created["contract_id"]]

@@ -4,7 +4,7 @@ from core.contract import Contract
 from domain.ports import DuplicateContractError
 
 
-class InMemoryUploadSink:
+class InMemoryContractRepository:
     def __init__(self) -> None:
         self._contracts: dict[str, Contract] = {}
         self._by_sha256: dict[str, str] = {}
@@ -22,3 +22,8 @@ class InMemoryUploadSink:
 
     def exists_by_sha256(self, sha256: str) -> bool:
         return sha256 in self._by_sha256
+
+    def list(self, limit: int, offset: int) -> list[Contract]:
+        ordered = sorted(self._contracts.values(), key=lambda contract: contract.sha256)
+        ordered.sort(key=lambda contract: contract.created_at, reverse=True)
+        return ordered[offset : offset + limit]
