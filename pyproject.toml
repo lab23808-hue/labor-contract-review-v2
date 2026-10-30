@@ -1,0 +1,17 @@
+[project]
+name = "labor-contract-review-v2"
+version = "0.1.0"
+description = "Labor contract review - M1 upload module"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "pydantic",
+    "pytest",
+    "httpx",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
