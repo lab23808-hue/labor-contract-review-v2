@@ -2,15 +2,17 @@ from typing import Optional
 
 from fastapi import FastAPI
 
-from api.dependencies import TempFileUploadSink
 from api.errors import register_exception_handlers
 from api.routes import contracts
-from domain.ports import UploadSink
+from domain.ports import ContractRepository
+from infra.sqlite_repository import SQLiteContractRepository
 
 
-def create_app(sink: Optional[UploadSink] = None) -> FastAPI:
+def create_app(repository: Optional[ContractRepository] = None) -> FastAPI:
     app = FastAPI(title="Labor Contract Review")
-    app.state.upload_sink = sink if sink is not None else TempFileUploadSink()
+    app.state.contract_repository = (
+        repository if repository is not None else SQLiteContractRepository()
+    )
     register_exception_handlers(app)
     app.include_router(contracts.router)
     return app
