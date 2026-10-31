@@ -1,4 +1,5 @@
-from typing import Annotated, Optional
+import asyncio
+from typing import Annotated
 
 from fastapi import Depends, Request
 
@@ -8,6 +9,10 @@ from domain.ports import ContractRepository
 
 def get_contract_repository(request: Request) -> ContractRepository:
     return request.app.state.contract_repository
+
+
+def get_parse_semaphore(request: Request) -> asyncio.Semaphore:
+    return request.app.state.parse_semaphore
 
 
 def get_contract_manager(

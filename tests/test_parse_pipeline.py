@@ -1,5 +1,8 @@
+import asyncio
 import hashlib
 import sqlite3
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -7,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from app.contract_manager import ContractManager
+from app.contract_manager import ContractManager, run_parse_task
 from domain.ports import ParsingError
 from fakes import InMemoryContractRepository
 from infra.sqlite_repository import SQLiteContractRepository
@@ -42,14 +45,26 @@ def _upload(client, filename="contract.txt", content=TXT):
     return response.json()
 
 
+def _wait_for_final(client, contract_id, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    body = client.get(f"/contracts/{contract_id}").json()
+    while time.monotonic() < deadline:
+        if body["status"] in ("parsed", "failed"):
+            return body
+        time.sleep(0.02)
+        body = client.get(f"/contracts/{contract_id}").json()
+    raise AssertionError(f"解析未在 {timeout}s 内完成：{body}")
+
+
 def test_parse_txt_produces_artifacts(parse_client):
     client, tmp_path = parse_client
     created = _upload(client)
 
     response = client.post(f"/contracts/{created['contract_id']}/parse")
 
-    assert response.status_code == 200
-    body = response.json()
+    assert response.status_code == 202
+    assert response.json()["status"] == "parsing"
+    body = _wait_for_final(client, created["contract_id"])
     assert body["status"] == "parsed"
     assert body["error"] is None
     assert body["parsed_at"]
@@ -101,8 +116,13 @@ def test_reparse_is_idempotent(parse_client):
     client, _ = parse_client
     created = _upload(client)
 
-    first = client.post(f"/contracts/{created['contract_id']}/parse").json()
-    second = client.post(f"/contracts/{created['contract_id']}/parse").json()
+    first_response = client.post(f"/contracts/{created['contract_id']}/parse")
+    assert first_response.status_code == 202
+    first = _wait_for_final(client, created["contract_id"])
+
+    second_response = client.post(f"/contracts/{created['contract_id']}/parse")
+    assert second_response.status_code == 202
+    second = _wait_for_final(client, created["contract_id"])
 
     assert first["status"] == second["status"] == "parsed"
     assert first["parsed_path"] == second["parsed_path"]
@@ -137,6 +157,37 @@ def test_parse_conflict_and_not_found(parse_client):
 
     assert client.post(f"/contracts/{created['contract_id']}/parse").status_code == 409
     assert client.post("/contracts/missing/parse").status_code == 404
+
+
+def test_parse_tasks_are_serialized():
+    class RecordingManager:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+            self.completed = 0
+            self._lock = threading.Lock()
+
+        def execute_parse(self, contract_id: str) -> None:
+            with self._lock:
+                self.active += 1
+                self.max_active = max(self.max_active, self.active)
+            time.sleep(0.05)
+            with self._lock:
+                self.active -= 1
+                self.completed += 1
+
+    manager = RecordingManager()
+
+    async def run_all() -> None:
+        semaphore = asyncio.Semaphore(1)
+        await asyncio.gather(
+            *(run_parse_task(manager, f"contract-{index}", semaphore) for index in range(3))
+        )
+
+    asyncio.run(run_all())
+
+    assert manager.max_active == 1
+    assert manager.completed == 3
 
 
 def test_restart_keeps_parsed_pointers(tmp_path):

@@ -1,10 +1,19 @@
+import asyncio
 from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Query,
+    Response,
+    UploadFile,
+)
 
-from api.dependencies import get_contract_manager
-from app.contract_manager import ContractManager
+from api.dependencies import get_contract_manager, get_parse_semaphore
+from app.contract_manager import ContractManager, run_parse_task
 from core.contract import Contract
 
 router = APIRouter(tags=["contracts"])
@@ -45,12 +54,25 @@ def get_contract(
     return manager.get(contract_id)
 
 
-@router.post("/contracts/{contract_id}/parse", response_model=Contract)
+@router.post(
+    "/contracts/{contract_id}/parse",
+    response_model=Contract,
+    status_code=202,
+    responses={
+        202: {
+            "description": "解析已受理，请轮询 GET /contracts/{contract_id} 的 status"
+        }
+    },
+)
 def parse_contract(
     contract_id: str,
+    background_tasks: BackgroundTasks,
     manager: Annotated[ContractManager, Depends(get_contract_manager)],
+    semaphore: Annotated[asyncio.Semaphore, Depends(get_parse_semaphore)],
 ) -> Contract:
-    return manager.parse(contract_id)
+    contract = manager.start_parse(contract_id)
+    background_tasks.add_task(run_parse_task, manager, contract_id, semaphore)
+    return contract
 
 
 @router.get("/contracts/{contract_id}/parsed")

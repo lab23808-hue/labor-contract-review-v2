@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import uuid
 from datetime import datetime, timezone
@@ -85,14 +86,20 @@ class ContractManager:
         return contract
 
     def parse(self, contract_id: str) -> Contract:
+        self.start_parse(contract_id)
+        return self.execute_parse(contract_id)
+
+    def start_parse(self, contract_id: str) -> Contract:
         contract = self.get(contract_id)
         if contract.status == "parsing":
             raise InvalidStateError(f"合同正在解析中，请稍后重试：{contract_id}")
 
-        self._repository.update(
-            contract.model_copy(update={"status": "parsing", "error": None})
-        )
+        parsing = contract.model_copy(update={"status": "parsing", "error": None})
+        self._repository.update(parsing)
+        return parsing
 
+    def execute_parse(self, contract_id: str) -> Contract:
+        contract = self.get(contract_id)
         try:
             parser = self._parsers.get(contract.file_format)
             if parser is None:
@@ -136,3 +143,10 @@ class ContractManager:
 
         self._repository.update(parsed)
         return parsed
+
+
+async def run_parse_task(
+    manager: ContractManager, contract_id: str, semaphore: asyncio.Semaphore
+) -> None:
+    async with semaphore:
+        await asyncio.to_thread(manager.execute_parse, contract_id)

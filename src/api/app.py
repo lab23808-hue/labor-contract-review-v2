@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Mapping, Optional
 
@@ -41,6 +42,7 @@ def create_app(
     )
     app.state.parsers = parsers if parsers is not None else build_parsers()
     app.state.validator = validator if validator is not None else PdfValidator()
+    app.state.parse_semaphore = asyncio.Semaphore(1)
     register_exception_handlers(app)
     app.include_router(contracts.router)
     return app
