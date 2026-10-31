@@ -8,3 +8,7 @@ class ValidationError(DomainError):
 
 class ContractNotFoundError(DomainError):
     pass
+
+
+class InvalidStateError(DomainError):
+    pass

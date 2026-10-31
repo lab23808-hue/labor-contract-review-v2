@@ -10,6 +10,11 @@ class Contract(BaseModel):
     file_format: str
     sha256: str
     size_bytes: int
-    status: Literal["uploaded"] = "uploaded"
+    status: Literal["uploaded", "parsing", "parsed", "failed"] = "uploaded"
     error: Optional[str] = None
     created_at: datetime
+    parsed_path: Optional[str] = None
+    parsed_sha256: Optional[str] = None
+    cleaned_path: Optional[str] = None
+    cleaned_sha256: Optional[str] = None
+    parsed_at: Optional[datetime] = None
