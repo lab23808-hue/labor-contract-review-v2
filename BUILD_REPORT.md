@@ -29,7 +29,7 @@ data/
             └── cleaned.txt                        # 清洗产物
 ```
 
-接口：`POST /contracts`、`GET /contracts/{id}`、`GET /contracts?limit=&offset=`、`POST /contracts/{id}/parse`、`GET /contracts/{id}/parsed`、`GET /contracts/{id}/cleaned`。
+接口：`POST /contracts`、`GET /contracts/{id}`、`GET /contracts?limit=&offset=`、`POST /contracts/{id}/parse`（202，后台执行）、`GET /contracts/{id}/parsed`、`GET /contracts/{id}/cleaned`。
 测试：`.venv/Scripts/python.exe -m pytest -q` → **30 passed**。
 
 ## 依赖与模型（M3）
@@ -98,6 +98,15 @@ data/
 
 **结论**：损坏 PDF 不会打崩 MinerU 服务，只会让当前解析任务失败，应用侧本来就会把合同标为 `failed`。此前的"MinerU 被假 PDF 打崩"是误判。A 项前置校验把这类文件挡在上传阶段；剩余风险是校验器（pypdf）与 MinerU（PDFium）解析能力不完全一致——pypdf 能打开但 PDFium 无法渲染的文件仍可能进入解析并失败（表现为 `failed`，不会影响服务或其他合同）。
 
+## M3.6c 异步解析
+
+- `POST /contracts/{id}/parse`：`ContractManager.start_parse()` 把状态置为 `parsing` 后立即返回 **202 + 合同 JSON**（body 中 `status=parsing`），解析通过 FastAPI `BackgroundTasks` 在响应发出后执行。
+- 用例拆分为 `start_parse()`（状态校验/迁移）与 `execute_parse()`（解析→清洗→写 artifacts→更新 DB）；同步的 `parse()` 保留为两者组合，供测试/内部使用。
+- 并发控制：`asyncio.Semaphore(1)` 挂在 `app.state`，后台任务 `async with semaphore: await asyncio.to_thread(execute_parse, ...)`。等待信号量时不阻塞事件循环，解析在独立线程中执行；并发请求排队而非并行。该信号量与 app 的事件循环绑定（每个 app 实例一个，生产单进程即全局）；测试多实例天然隔离。
+- 状态流转保持 `uploaded → parsing → parsed/failed`；`parsing` 再次提交返回 409；`parsed/failed` 允许重新解析。
+- 启动回收保留：重启时 `parsing → failed`（`reset_parsing_to_failed`），已验证强杀进程场景。
+- API 响应 JSON 结构不变，仅 `status` 值不同；OpenAPI 的 202 响应描述注明「已受理，轮询 GET /contracts/{id}」，README 同步说明。
+
 ## 分层
 
 - `domain/`：`ports.py`（`ContractRepository`、`DocumentParser`、`StoredArtifacts`）、`validation.py`、`cleaning.py`（纯函数清洗器）；不 import api/app/infra
@@ -164,17 +173,19 @@ data/
 
 M3 新发现问题：
 
-1. **解析同步阻塞耗时**：接口同步等待 MinerU；1 页 PDF 首次约 24 秒（含模型加载），长合同更久，期间占用一个线程池线程。无队列/异步任务（按 M3 规格）。
+1. **单个解析耗时与排队**：M3.6c 已改为后台执行，接口立即返回 202；但单个合同解析仍需数十秒（1 页 PDF 首次约 25 秒），且全局并发为 1，多个合同会排队。排队在进程内，非持久任务队列。
 2. **扫描件质量不承诺**：basic 档 OCR/版面质量未做语料评估；复杂扫描件可能乱码或漏段。
 3. **多图不合并**：一个合同对应一个文件；多张图片不会合并为一份合同解析，PDF 内图片也不单独导出，仅输出文本 Markdown。
 4. **PDF 依赖本地 MinerU 服务**：doclib 服务未启动时 PDF 解析直接失败（错误信息提示 `mineru server start`）；basic 模型约 819MB，存放于 `~/.mineru`。
-5. **`parsing` 状态运行期卡死**：启动时已自动回收（M3.5 的 `reset_parsing_to_failed`）；但进程在解析过程中卡死且不重启时仍会停在 `parsing`（后续 parse 返回 409），留待 M4 异步化时增加运行期超时。
+5. **`parsing` 状态运行期卡死**：启动回收覆盖重启场景；若后台任务因非 `ParsingError` 异常中断且进程不重启，状态会停在 `parsing`（后续 parse 返回 409），需要重启或手工处理，留待 M4 持久队列/运行期超时。
 6. **并发 parse 竞态**：两个请求可能都在状态检查后进入解析（结果一致，但会重复调用解析器）。
 7. **页码启发式误伤**：独立数字行（如 "1"）会被当作页码删除，可能误删纯数字条款编号。
 8. **MinerU 运行时文件**：服务在仓库工作目录生成 `blobs/` 与 `.mineru-service.lock`，已在 `.gitignore` 忽略；真实数据目录 `data/` 亦被忽略。
 9. **except 收窄后的异常契约**：解析器新增异常类型必须显式纳入 `ParsingError` 体系；否则会以 500 暴露（有意设计，避免仓储/程序错误被伪装成 `failed`）。
 10. **MinerU 服务与损坏文件（M3.6b 复核，推翻此前的误判）**：受控实验显示，损坏 PDF 只让该次解析任务失败——doclib 记录 `Parse execution failed`，parse-server 打印 Pdfium traceback，但服务 PID 不变；紧接着解析正常 PDF 成功、无连坐。此前"假 PDF 打崩服务"的判断不成立：日志显示 13:59 发生过 managed parse-server 健康检查重启（伴随 WinError 10013），doclib 进程在 14:01–15:13 之间无日志退出，更像从临时 shell 启动的守护进程生命周期问题。M3.6b 的上传前置校验仍会阻止此类文件进入解析。
 11. **managed parse-server 重启可能遇到 WinError 10013**：13:59–14:00 健康检查连续重启时出现"访问权限不允许的套接字尝试"，第 3 次重试成功。MinerU 内部重试可恢复；若持续失败，PDF 解析不可用（与损坏文件无关）。
+12. **BackgroundTasks 非持久队列**：进程崩溃时排队/执行中的解析任务丢失；重启后只把状态回收为 `failed`，不会自动重试。
+13. **多 worker 部署**：`asyncio.Semaphore(1)` 为进程内信号量；若以 `--workers > 1` 启动，多个进程会并行解析。当前约定单 worker 部署，M4 引入共享队列后再放开。
 
 ## 验收记录
 
@@ -210,3 +221,12 @@ M3 新发现问题：
 - 加密 PDF、0 页 PDF 由 `validate_upload` 单元测试覆盖，均抛 `CorruptedFileError`。
 - `pytest`：**31 passed**。
 - MinerU 调查：损坏 PDF 仅单任务失败、服务 PID 不变、无连坐、无残留锁；详见上节结论。
+
+## M3.6c 验收记录
+
+- txt：`POST /parse` 返回 **202**（0.018s），body `status=parsing`；轮询 `GET` 后为 `parsed`。
+- PDF：`POST /parse` 返回 **202**（0.013s）；解析中再次 `POST` → **409**。
+- 强杀：解析中 `kill -9` 服务，重启后该合同 `status=failed`，`error=服务重启导致解析中断`。
+- 连续提交 3 个 txt：均完成且产物内容各自正确、无交错（A/B/C 三份 cleaned.txt 与原文一致）。
+- 并发串行由单元测试 `test_parse_tasks_are_serialized` 覆盖（3 个任务最大并发 = 1）。
+- `pytest`：**32 passed**。

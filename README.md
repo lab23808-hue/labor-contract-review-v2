@@ -20,6 +20,10 @@ data/
         └── cleaned.txt
 ```
 
+## 解析接口（异步）
+
+`POST /contracts/{id}/parse` 立即返回 **202**（`status=parsing`），解析在后台串行执行；客户端轮询 `GET /contracts/{id}`，直到 `status` 变为 `parsed` 或 `failed`。解析中重复提交同一合同返回 **409**。
+
 ## MinerU 本地服务（PDF / JPG / PNG 解析前必须启动）
 
 ```bash
