@@ -107,6 +107,15 @@ data/
 - 启动回收保留：重启时 `parsing → failed`（`reset_parsing_to_failed`），已验证强杀进程场景。
 - API 响应 JSON 结构不变，仅 `status` 值不同；OpenAPI 的 202 响应描述注明「已受理，轮询 GET /contracts/{id}」，README 同步说明。
 
+## M3.7 删除接口与并发防御
+
+- **`DELETE /contracts/{id}`**：返回 204；不存在 404；`status=parsing` 时 409；其他状态放行。路径仅由账本行的 `sha256` 推导（`DATA_DIR/files/<sha256>/`），不接受客户端路径。
+- **失败顺序**：`repository.delete()` 先 `BEGIN IMMEDIATE` 取得写锁 → 校验行/状态 → `shutil.rmtree` 删除整目录 → 删除账本行 → 提交。磁盘不可回滚、DB 可回滚：磁盘删除失败时回滚并保留账行（宁可账上有账、仓库缺房），由 `StorageDeleteError` 映射 500；事务写锁也避免删除与 parse 抢占交错。
+- **上传查重（2a）**：`sha256` 自 v1 起就是 `PRIMARY KEY`（SQLite autoindex，隐含 UNIQUE），INSERT 冲突已转成 `DuplicateContractError` 并在 detail 带已有 `contract_id`；无需新增 UNIQUE 索引或迁移（2c 不适用）。并发双 POST 由数据库唯一约束兜底，恰有一份 201。
+- **解析抢占（2b）**：`claim_for_parsing()` 用单条原子 `UPDATE ... SET status='parsing' WHERE contract_id=? AND status IN ('uploaded','parsed','failed')`；受影响 1 行 → 202 + 后台任务，0 行 → 存在则 409、不存在则 404。保留 M3/M3.6c 已验收的 `parsed/failed` 可重解析能力（与字面 SQL 的 `status='uploaded'` 不同，经确认采用此版本）。
+- **测试**：新增 `tests/test_delete_contract.py`（4 条）与 `tests/test_concurrency.py`（3 条），总计 **39 passed**；未创建/引用 `test.txt`。
+- **受保护记录**：`test.txt`（contract_id `497a8067…`）与其 64 位 sha 目录全程只读，未被迁移或清理逻辑触碰。
+
 ## 分层
 
 - `domain/`：`ports.py`（`ContractRepository`、`DocumentParser`、`StoredArtifacts`）、`validation.py`、`cleaning.py`（纯函数清洗器）；不 import api/app/infra
@@ -186,6 +195,9 @@ M3 新发现问题：
 11. **managed parse-server 重启可能遇到 WinError 10013**：13:59–14:00 健康检查连续重启时出现"访问权限不允许的套接字尝试"，第 3 次重试成功。MinerU 内部重试可恢复；若持续失败，PDF 解析不可用（与损坏文件无关）。
 12. **BackgroundTasks 非持久队列**：进程崩溃时排队/执行中的解析任务丢失；重启后只把状态回收为 `failed`，不会自动重试。
 13. **多 worker 部署**：`asyncio.Semaphore(1)` 为进程内信号量；若以 `--workers > 1` 启动，多个进程会并行解析。当前约定单 worker 部署，M4 引入共享队列后再放开。
+14. **删除期间持有 SQLite 写锁**：`DELETE` 在 `BEGIN IMMEDIATE` 事务内执行 `rmtree`，期间其他写请求等待（busy timeout 5s）；目录很大时可能超时失败。
+15. **删除中途崩溃**：事务回滚会保留账行，但磁盘可能已被部分删除，之后 `GET` 会因原文缺失告警；跨资源删除无法完全原子，属已知取舍。
+16. **并发双 parse 的 409 窗口**：仅当第一条仍处于 `parsing` 时第二条才 409；若第一条极快完成，第二条会按“可重解析”返回 202（这是保留重解析能力的既有语义，非竞态）。
 
 ## 验收记录
 
@@ -230,3 +242,11 @@ M3 新发现问题：
 - 连续提交 3 个 txt：均完成且产物内容各自正确、无交错（A/B/C 三份 cleaned.txt 与原文一致）。
 - 并发串行由单元测试 `test_parse_tasks_are_serialized` 覆盖（3 个任务最大并发 = 1）。
 - `pytest`：**32 passed**。
+
+## M3.7 验收记录
+
+- DELETE：上传后删除 → **204**，`GET` 变 404，`data/files/<sha256>/` 消失。
+- DELETE 不存在 → **404**；`parsing` → **409**（账行与目录保留）；模拟 `rmtree` 抛错 → **500**，账行与目录保留。
+- 并发：仓库层双写同 sha 恰一个成功、一个 `DuplicateContractError`（含成功方 contract_id）；API 双 POST → 201+409；API 双 parse（慢解析器占住 parsing）→ 202+409。
+- 受保护 `test.txt` 记录与其目录只读核对，状态仍为 `parsed`、目录存在。
+- 全量 `pytest`：**39 passed**。
