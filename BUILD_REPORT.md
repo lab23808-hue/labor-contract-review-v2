@@ -14,7 +14,7 @@ PDF/JPG/PNG 解析依赖 MinerU 4.x 的本地服务（MinerU 4 是 client/server
 .venv/Scripts/mineru.exe server stop       # 停止
 ```
 
-本机已完成：basic 档模型下载、`parse_server.local.mode=managed`、`managed_tier=basic`，服务当前处于运行状态（如需停止用上面的 stop 命令）。
+本机已完成：basic 档模型下载、`parse_server.local.mode=managed`、`managed_tier=basic`。服务按需启动——解析 PDF/JPG/PNG 前先 `mineru server start`；txt/docx 不依赖该服务（详见 [README.md](README.md)）。
 
 数据目录由 `DATA_DIR` 指定（默认相对路径 `data/`）：
 
@@ -52,6 +52,16 @@ data/
   - 配置：`parse_server.local.mode=managed`、`parse_server.local.managed_tier=basic`。
 - 首次真实解析（1 页文本 PDF）：约 24 秒（含模型加载，ONNX DirectML，RTX 3050）后续更快。
 - 假 PDF（`%PDF-` 头 + 非法内容）：约 6 秒失败，错误为 `PDFium: Data format error`。
+
+## M3.5 解析链路加固（行为不变）
+
+- **MinerU 子进程超时**：`subprocess.run(..., timeout=660)`（略大于 `--wait 600`），`TimeoutExpired` 转为 `RuntimeError` 后由适配器统一包装为 `ParsingError`。
+- **领域错误**：`domain/ports.py` 新增 `ParsingError` 与 `UnsupportedFormatError(ParsingError)`；`ContractManager` 不再抛 `ValueError`。
+- **异常收窄**：`ContractManager.parse()` 只捕获 `ParsingError`；`remove_artifacts`、写 `failed` 状态、写 `parsed` 状态均在 `try` 之外，仓储自身出错（如数据库写失败）直接抛给 FastAPI 返回 500，不会伪装成 `failed`。
+- **适配器统一包装**：`mineru_parser`、`docx_parser`、`txt_parser` 退出前把非 `ParsingError` 异常包装为 `ParsingError`。
+- **启动回收**：`reset_parsing_to_failed()` 在 FastAPI lifespan 启动时执行，把残留 `parsing` 记录改为 `failed`（error=`服务重启导致解析中断`）并返回影响行数。
+- **顺带**：`SQLiteContractRepository` 的"不支持的数据库版本"由 `RuntimeError` 改为 `UnsupportedSchemaVersionError`，使 `src/infra` 中的 `RuntimeError` 只出现在解析超时的包装路径。
+- **测试调整**：仅同步异常类型断言（`RuntimeError` → `ParsingError`），其余用例与断言未改；30 passed。
 
 ## 分层
 
@@ -123,10 +133,12 @@ M3 新发现问题：
 2. **扫描件质量不承诺**：basic 档 OCR/版面质量未做语料评估；复杂扫描件可能乱码或漏段。
 3. **多图不合并**：一个合同对应一个文件；多张图片不会合并为一份合同解析，PDF 内图片也不单独导出，仅输出文本 Markdown。
 4. **PDF 依赖本地 MinerU 服务**：doclib 服务未启动时 PDF 解析直接失败（错误信息提示 `mineru server start`）；basic 模型约 819MB，存放于 `~/.mineru`。
-5. **`parsing` 状态无超时回收**：解析进程崩溃会永久停在 `parsing`，后续 parse 返回 409，需要手工改库或删除后重传。
+5. **`parsing` 状态运行期卡死**：启动时已自动回收（M3.5 的 `reset_parsing_to_failed`）；但进程在解析过程中卡死且不重启时仍会停在 `parsing`（后续 parse 返回 409），留待 M4 异步化时增加运行期超时。
 6. **并发 parse 竞态**：两个请求可能都在状态检查后进入解析（结果一致，但会重复调用解析器）。
 7. **页码启发式误伤**：独立数字行（如 "1"）会被当作页码删除，可能误删纯数字条款编号。
 8. **MinerU 运行时文件**：服务在仓库工作目录生成 `blobs/` 与 `.mineru-service.lock`，已在 `.gitignore` 忽略；真实数据目录 `data/` 亦被忽略。
+9. **except 收窄后的异常契约**：解析器新增异常类型必须显式纳入 `ParsingError` 体系；否则会以 500 暴露（有意设计，避免仓储/程序错误被伪装成 `failed`）。
+10. **MinerU 本地服务可能被损坏文件打崩**：实测假 PDF 触发 PDFium 异常后 doclib 服务退出；应用侧仍正确返回 `failed`，但需要重新 `mineru server start`。
 
 ## 验收记录
 
@@ -135,6 +147,15 @@ M3 新发现问题：
   - `parsed.md`：`# 劳动合同` / `第一条 试用期三个月。` / `| 甲方 | 乙方 |`
   - `cleaned.txt`：`劳动合同` / `第一条 试用期三个月。` / `| 甲方 | 乙方 |`
 - txt 实测：`parse → parsed`，重复 parse 仍 `parsed`；重启进程后 `GET` 仍 `parsed`，`artifacts/` 下 `parsed.md`、`cleaned.txt` 均在。
-- 假 PDF 实测：`status=failed`，`error=RuntimeError: MinerU 解析失败（exit 1）：错误: Failed to load document (PDFium: Data format error).`，无 artifacts 目录。
+- 假 PDF 实测：`status=failed`，`error=ParsingError: MinerU 解析失败（...）`，无 artifacts 目录。
 - 真实 PDF（MinerU）实测：`status=parsed`，`parsed.md` 含 `<!-- page 1 of 1 -->` 与正文；`cleaned.txt` 已去除注释标记并保留正文。
 - 旧 12 位目录迁移：单元测试覆盖（自动重命名 + 旧数据可读）。
+
+## M3.5 验收记录
+
+- grep（限定 `*.py`）：`src/infra` 中 `RuntimeError` 仅剩 MinerU 超时包装一处；`src/app`、`src/domain` 中 `except Exception` 为 0；`ValueError` 为 0。
+- 现有 demo 记录 `GET /contracts/21840c04...`：仍为 `parsed`，`parsed_path/cleaned_path/parsed_sha256/cleaned_sha256` 与 M3 时一致。
+- 假 PDF：`status=failed`，`error=ParsingError: MinerU 解析失败（...）`，无 artifacts。
+- 真实 txt：`status=parsed`，`artifacts/parsed.md`、`cleaned.txt` 正常，内容为「劳动合同 / 第一条 试用期三个月。」
+- 模拟中断：手工把记录改为 `status='parsing'` 后重启，`GET` 返回 `status=failed`，`error=服务重启导致解析中断`。
+- `pytest`：**30 passed**。

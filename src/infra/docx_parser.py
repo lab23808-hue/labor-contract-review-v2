@@ -2,9 +2,19 @@ from io import BytesIO
 
 from docx import Document
 
+from domain.ports import ParsingError
+
 
 class DocxParser:
     def parse(self, filename: str, content: bytes) -> str:
+        try:
+            return self._parse(content)
+        except ParsingError:
+            raise
+        except Exception as exc:
+            raise ParsingError(f"docx 解析失败：{exc}") from exc
+
+    def _parse(self, content: bytes) -> str:
         document = Document(BytesIO(content))
         blocks: list[str] = []
 

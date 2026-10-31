@@ -1,4 +1,5 @@
-from typing import Mapping, Optional
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Mapping, Optional
 
 from fastapi import FastAPI
 
@@ -22,11 +23,17 @@ def build_parsers() -> dict[str, DocumentParser]:
     }
 
 
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    app.state.contract_repository.reset_parsing_to_failed()
+    yield
+
+
 def create_app(
     repository: Optional[ContractRepository] = None,
     parsers: Optional[Mapping[str, DocumentParser]] = None,
 ) -> FastAPI:
-    app = FastAPI(title="Labor Contract Review")
+    app = FastAPI(title="Labor Contract Review", lifespan=_lifespan)
     app.state.contract_repository = (
         repository if repository is not None else SQLiteContractRepository()
     )

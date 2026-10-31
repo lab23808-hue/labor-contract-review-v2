@@ -11,6 +11,10 @@ from domain.ports import DuplicateContractError, StoredArtifacts
 
 logger = logging.getLogger(__name__)
 
+
+class UnsupportedSchemaVersionError(Exception):
+    pass
+
 _DUPLICATE_ERRORS = {"SQLITE_CONSTRAINT_PRIMARYKEY", "SQLITE_CONSTRAINT_UNIQUE"}
 _SCHEMA_VERSION = 2
 
@@ -64,7 +68,7 @@ class SQLiteContractRepository:
         if version == 1:
             self._migrate_v1_to_v2(conn)
             return
-        raise RuntimeError(f"不支持的数据库版本：{version}")
+        raise UnsupportedSchemaVersionError(f"不支持的数据库版本：{version}")
 
     @staticmethod
     def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -237,6 +241,19 @@ class SQLiteContractRepository:
             (directory / name).unlink(missing_ok=True)
         if not any(directory.iterdir()):
             directory.rmdir()
+
+    def reset_parsing_to_failed(self) -> int:
+        """把 status='parsing' 的记录改为 failed，error 记'服务重启导致解析中断'。返回影响行数。"""
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "UPDATE contracts SET status = 'failed', error = ? WHERE status = 'parsing'",
+                ("服务重启导致解析中断",),
+            )
+            conn.commit()
+            rowcount = cursor.rowcount
+        if rowcount:
+            logger.warning("启动回收：%d 条 parsing 记录转为 failed", rowcount)
+        return rowcount
 
 
 def _row_to_contract(row: sqlite3.Row) -> Contract:

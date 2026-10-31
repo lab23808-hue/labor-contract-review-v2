@@ -3,6 +3,7 @@ from io import BytesIO
 import pytest
 from docx import Document
 
+from domain.ports import ParsingError
 from infra.docx_parser import DocxParser
 from infra.mineru_parser import MinerUParser
 from infra.txt_parser import TxtParser
@@ -44,5 +45,5 @@ def test_mineru_parser_reads_markdown_and_errors_when_missing(monkeypatch):
     assert parser.parse("contract.pdf", b"%PDF-1.7") == "# 解析结果\n\n正文"
 
     monkeypatch.setattr(parser, "_run", lambda input_path, output_path: None)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ParsingError):
         parser.parse("contract.pdf", b"%PDF-1.7")

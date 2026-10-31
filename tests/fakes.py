@@ -46,3 +46,13 @@ class InMemoryContractRepository:
 
     def remove_artifacts(self, contract: Contract) -> None:
         self.artifacts.pop(contract.contract_id, None)
+
+    def reset_parsing_to_failed(self) -> int:
+        count = 0
+        for contract_id, contract in list(self._contracts.items()):
+            if contract.status == "parsing":
+                self._contracts[contract_id] = contract.model_copy(
+                    update={"status": "failed", "error": "服务重启导致解析中断"}
+                )
+                count += 1
+        return count

@@ -12,6 +12,14 @@ class DuplicateContractError(UploadSinkError):
     pass
 
 
+class ParsingError(Exception):
+    pass
+
+
+class UnsupportedFormatError(ParsingError):
+    pass
+
+
 class DocumentParser(Protocol):
     def parse(self, filename: str, content: bytes) -> str: ...
 
@@ -40,3 +48,5 @@ class ContractRepository(Protocol):
     ) -> StoredArtifacts: ...
 
     def remove_artifacts(self, contract: Contract) -> None: ...
+
+    def reset_parsing_to_failed(self) -> int: ...

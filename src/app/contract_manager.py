@@ -6,7 +6,13 @@ from typing import Mapping
 from core.contract import Contract
 from core.errors import ContractNotFoundError, InvalidStateError
 from domain.cleaning import clean_text
-from domain.ports import ContractRepository, DocumentParser, DuplicateContractError
+from domain.ports import (
+    ContractRepository,
+    DocumentParser,
+    DuplicateContractError,
+    ParsingError,
+    UnsupportedFormatError,
+)
 from domain.validation import validate_upload
 
 
@@ -62,7 +68,7 @@ class ContractManager:
         try:
             parser = self._parsers.get(contract.file_format)
             if parser is None:
-                raise ValueError(f"不支持的解析格式：{contract.file_format}")
+                raise UnsupportedFormatError(f"不支持的解析格式：{contract.file_format}")
 
             parsed_markdown = parser.parse(
                 contract.filename, self._repository.read_content(contract)
@@ -84,8 +90,7 @@ class ContractManager:
                     "parsed_at": datetime.now(timezone.utc),
                 }
             )
-            self._repository.update(parsed)
-        except Exception as exc:
+        except ParsingError as exc:
             self._repository.remove_artifacts(contract)
             failed = contract.model_copy(
                 update={
@@ -101,4 +106,5 @@ class ContractManager:
             self._repository.update(failed)
             return failed
 
+        self._repository.update(parsed)
         return parsed

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from api.app import create_app
 from app.contract_manager import ContractManager
+from domain.ports import ParsingError
 from fakes import InMemoryContractRepository
 from infra.sqlite_repository import SQLiteContractRepository
 from infra.txt_parser import TxtParser
@@ -17,7 +18,7 @@ TXT = "劳动合同\n\n第一条　试用期三个月。\n第 1 页\n".encode("u
 
 class BrokenParser:
     def parse(self, filename, content):
-        raise ValueError("无法解析的 PDF")
+        raise ParsingError("无法解析的 PDF")
 
 
 class ScriptedParser:
@@ -26,7 +27,7 @@ class ScriptedParser:
 
     def parse(self, filename, content):
         if self.fail:
-            raise RuntimeError("解析失败")
+            raise ParsingError("解析失败")
         return "# 标题\n\n正文"
 
 
