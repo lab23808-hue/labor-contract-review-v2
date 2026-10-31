@@ -1,6 +1,8 @@
 .venv/
 .idea/
 data/
+blobs/
+.mineru-service.lock
 __pycache__/
 *.py[cod]
 .pytest_cache/
