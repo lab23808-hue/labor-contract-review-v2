@@ -20,3 +20,7 @@ class ArtifactMissingError(DomainError):
 
 class CorruptedFileError(DomainError):
     pass
+
+
+class StorageDeleteError(DomainError):
+    pass

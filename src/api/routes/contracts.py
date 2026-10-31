@@ -18,7 +18,6 @@ from core.contract import Contract
 
 router = APIRouter(tags=["contracts"])
 
-
 def _artifact_response(content: bytes, media_type: str, filename: str) -> Response:
     headers = {
         "Content-Disposition": (
@@ -73,6 +72,15 @@ def parse_contract(
     contract = manager.start_parse(contract_id)
     background_tasks.add_task(run_parse_task, manager, contract_id, semaphore)
     return contract
+
+
+@router.delete("/contracts/{contract_id}", status_code=204)
+def delete_contract(
+    contract_id: str,
+    manager: Annotated[ContractManager, Depends(get_contract_manager)],
+) -> Response:
+    manager.delete(contract_id)
+    return Response(status_code=204)
 
 
 @router.get("/contracts/{contract_id}/parsed")

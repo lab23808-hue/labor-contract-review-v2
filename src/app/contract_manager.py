@@ -65,6 +65,9 @@ class ContractManager:
     def exists_by_sha256(self, sha256: str) -> bool:
         return self._repository.exists_by_sha256(sha256)
 
+    def delete(self, contract_id: str) -> None:
+        self._repository.delete(contract_id)
+
     def parsed_artifact(self, contract_id: str) -> tuple[str, bytes]:
         contract = self._parsed_contract(contract_id)
         if contract.parsed_path is None:
@@ -90,13 +93,12 @@ class ContractManager:
         return self.execute_parse(contract_id)
 
     def start_parse(self, contract_id: str) -> Contract:
-        contract = self.get(contract_id)
-        if contract.status == "parsing":
+        if not self._repository.claim_for_parsing(contract_id):
+            contract = self._repository.get(contract_id)
+            if contract is None:
+                raise ContractNotFoundError(f"合同不存在：{contract_id}")
             raise InvalidStateError(f"合同正在解析中，请稍后重试：{contract_id}")
-
-        parsing = contract.model_copy(update={"status": "parsing", "error": None})
-        self._repository.update(parsing)
-        return parsing
+        return self.get(contract_id)
 
     def execute_parse(self, contract_id: str) -> Contract:
         contract = self.get(contract_id)

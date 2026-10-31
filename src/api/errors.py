@@ -6,12 +6,13 @@ from core.errors import (
     ContractNotFoundError,
     CorruptedFileError,
     InvalidStateError,
+    StorageDeleteError,
     ValidationError,
 )
 from domain.ports import DuplicateContractError
 
-# 注册异常处理器，挂这个函数把六段“异常处理规则”挂到 app 上。
-# 以后只要程序里抛出这六种异常，FastAPI 就会自动拦截，
+# 注册异常处理器，挂这个函数把七段“异常处理规则”挂到 app 上。
+# 以后只要程序里抛出这七种异常，FastAPI 就会自动拦截，
 # 不会让程序崩溃，而是返回一个标准的 JSON 响应。
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(ValidationError)
@@ -49,3 +50,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request, exc: CorruptedFileError
     ) -> JSONResponse:
         return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(StorageDeleteError)
+    async def handle_storage_delete(
+        request: Request, exc: StorageDeleteError
+    ) -> JSONResponse:
+        return JSONResponse(status_code=500, content={"detail": str(exc)})

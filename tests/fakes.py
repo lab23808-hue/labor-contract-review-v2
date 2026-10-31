@@ -1,7 +1,11 @@
 from typing import Optional
 
 from core.contract import Contract
-from core.errors import ArtifactMissingError
+from core.errors import (
+    ArtifactMissingError,
+    ContractNotFoundError,
+    InvalidStateError,
+)
 from domain.ports import DuplicateContractError, StoredArtifacts
 
 
@@ -66,6 +70,31 @@ class InMemoryContractRepository:
             return self.artifact_files[relative_path]
         except KeyError:
             raise ArtifactMissingError(f"artifacts 丢失：{relative_path}") from None
+
+    def claim_for_parsing(self, contract_id: str) -> bool:
+        contract = self._contracts.get(contract_id)
+        if contract is None or contract.status == "parsing":
+            return False
+        self._contracts[contract_id] = contract.model_copy(
+            update={"status": "parsing", "error": None}
+        )
+        return True
+
+    def delete(self, contract_id: str) -> None:
+        contract = self._contracts.get(contract_id)
+        if contract is None:
+            raise ContractNotFoundError(f"合同不存在：{contract_id}")
+        if contract.status == "parsing":
+            raise InvalidStateError(f"合同正在解析中，无法删除：{contract_id}")
+        del self._contracts[contract_id]
+        self._by_sha256.pop(contract.sha256, None)
+        self.contents.pop(contract_id, None)
+        self.artifacts.pop(contract_id, None)
+        stale = [
+            path for path in self.artifact_files if contract_id in path
+        ]
+        for path in stale:
+            del self.artifact_files[path]
 
     def reset_parsing_to_failed(self) -> int:
         count = 0

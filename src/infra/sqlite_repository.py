@@ -1,4 +1,5 @@
 import logging
+import shutil
 import sqlite3
 from contextlib import closing
 from datetime import datetime
@@ -7,7 +8,12 @@ from typing import Optional, Union
 
 from config import settings
 from core.contract import Contract
-from core.errors import ArtifactMissingError
+from core.errors import (
+    ArtifactMissingError,
+    ContractNotFoundError,
+    InvalidStateError,
+    StorageDeleteError,
+)
 from domain.ports import DuplicateContractError, StoredArtifacts
 
 logger = logging.getLogger(__name__)
@@ -263,6 +269,65 @@ class SQLiteContractRepository:
         if not path.is_file():
             raise ArtifactMissingError(f"artifacts 丢失：{relative_path}")
         return path.read_bytes()
+
+    def claim_for_parsing(self, contract_id: str) -> bool:
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE contracts
+                SET status = 'parsing', error = NULL
+                WHERE contract_id = ?
+                  AND status IN ('uploaded', 'parsed', 'failed')
+                """,
+                (contract_id,),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+
+    def delete(self, contract_id: str) -> None:
+        conn = self._connect()
+        try:
+            # BEGIN IMMEDIATE 先取得写锁：删除期间 parse 的原子抢占会等待，
+            # 避免“一边解析一边删目录”。
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM contracts WHERE contract_id = ?", (contract_id,)
+            ).fetchone()
+            if row is None:
+                raise ContractNotFoundError(f"合同不存在：{contract_id}")
+            contract = _row_to_contract(row)
+            if contract.status == "parsing":
+                raise InvalidStateError(f"合同正在解析中，无法删除：{contract_id}")
+
+            directory = (self.files_dir / contract.sha256).resolve()
+            root = self.files_dir.resolve()
+            if directory == root or root not in directory.parents:
+                raise ArtifactMissingError(f"落盘路径非法：{contract.sha256}")
+
+            # 先删磁盘、后删账本：磁盘删除不可回滚。磁盘删除失败时回滚事务、
+            # 保留账本行（宁可账上有账、仓库缺房），避免留下无账本的孤儿目录；
+            # 若磁盘已删而账本删除失败，则提交前抛错回滚，账行保留，属于同类取舍。
+            try:
+                if directory.is_dir():
+                    shutil.rmtree(directory)
+                else:
+                    logger.warning(
+                        "删除时落盘目录已缺失：contract_id=%s sha256=%s",
+                        contract.contract_id,
+                        contract.sha256,
+                    )
+            except OSError as exc:
+                raise StorageDeleteError(f"删除落盘目录失败：{exc}") from exc
+
+            conn.execute(
+                "DELETE FROM contracts WHERE contract_id = ?", (contract_id,)
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def reset_parsing_to_failed(self) -> int:
         """把 status='parsing' 的记录改为 failed，error 记'服务重启导致解析中断'。返回影响行数。"""
