@@ -33,3 +33,11 @@ def get_contract(
     manager: Annotated[ContractManager, Depends(get_contract_manager)],
 ) -> Contract:
     return manager.get(contract_id)
+
+
+@router.post("/contracts/{contract_id}/parse", response_model=Contract)
+def parse_contract(
+    contract_id: str,
+    manager: Annotated[ContractManager, Depends(get_contract_manager)],
+) -> Contract:
+    return manager.parse(contract_id)

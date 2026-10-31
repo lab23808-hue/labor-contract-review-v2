@@ -1,16 +1,21 @@
 import hashlib
 import uuid
 from datetime import datetime, timezone
+from typing import Mapping
 
 from core.contract import Contract
-from core.errors import ContractNotFoundError
-from domain.ports import ContractRepository, DuplicateContractError
+from core.errors import ContractNotFoundError, InvalidStateError
+from domain.cleaning import clean_text
+from domain.ports import ContractRepository, DocumentParser, DuplicateContractError
 from domain.validation import validate_upload
 
 
 class ContractManager:
-    def __init__(self, repository: ContractRepository) -> None:
+    def __init__(
+        self, repository: ContractRepository, parsers: Mapping[str, DocumentParser]
+    ) -> None:
         self._repository = repository
+        self._parsers = parsers
 
     def upload(self, filename: str, content: bytes) -> Contract:
         file_format = validate_upload(filename, content)
@@ -44,3 +49,56 @@ class ContractManager:
 
     def exists_by_sha256(self, sha256: str) -> bool:
         return self._repository.exists_by_sha256(sha256)
+
+    def parse(self, contract_id: str) -> Contract:
+        contract = self.get(contract_id)
+        if contract.status == "parsing":
+            raise InvalidStateError(f"合同正在解析中，请稍后重试：{contract_id}")
+
+        self._repository.update(
+            contract.model_copy(update={"status": "parsing", "error": None})
+        )
+
+        try:
+            parser = self._parsers.get(contract.file_format)
+            if parser is None:
+                raise ValueError(f"不支持的解析格式：{contract.file_format}")
+
+            parsed_markdown = parser.parse(
+                contract.filename, self._repository.read_content(contract)
+            )
+            cleaned_text = clean_text(parsed_markdown)
+            parsed_bytes = parsed_markdown.encode("utf-8")
+            cleaned_bytes = cleaned_text.encode("utf-8")
+            artifacts = self._repository.write_artifacts(
+                contract, parsed_bytes, cleaned_bytes
+            )
+            parsed = contract.model_copy(
+                update={
+                    "status": "parsed",
+                    "error": None,
+                    "parsed_path": artifacts.parsed_path,
+                    "parsed_sha256": hashlib.sha256(parsed_bytes).hexdigest(),
+                    "cleaned_path": artifacts.cleaned_path,
+                    "cleaned_sha256": hashlib.sha256(cleaned_bytes).hexdigest(),
+                    "parsed_at": datetime.now(timezone.utc),
+                }
+            )
+            self._repository.update(parsed)
+        except Exception as exc:
+            self._repository.remove_artifacts(contract)
+            failed = contract.model_copy(
+                update={
+                    "status": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                    "parsed_path": None,
+                    "parsed_sha256": None,
+                    "cleaned_path": None,
+                    "cleaned_sha256": None,
+                    "parsed_at": None,
+                }
+            )
+            self._repository.update(failed)
+            return failed
+
+        return parsed

@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import Depends, Request
 
@@ -11,6 +11,7 @@ def get_contract_repository(request: Request) -> ContractRepository:
 
 
 def get_contract_manager(
+    request: Request,
     repository: Annotated[ContractRepository, Depends(get_contract_repository)],
 ) -> ContractManager:
-    return ContractManager(repository)
+    return ContractManager(repository, request.app.state.parsers)
