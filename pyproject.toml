@@ -10,6 +10,8 @@ dependencies = [
     "pydantic",
     "pytest",
     "httpx",
+    "python-docx",
+    "mineru",
 ]
 
 [tool.pytest.ini_options]
