@@ -24,6 +24,10 @@ class DocumentParser(Protocol):
     def parse(self, filename: str, content: bytes) -> str: ...
 
 
+class DocumentValidator(Protocol):
+    def validate_pdf(self, content: bytes) -> None: ...
+
+
 @dataclass(frozen=True)
 class StoredArtifacts:
     parsed_path: str

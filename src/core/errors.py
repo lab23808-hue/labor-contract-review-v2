@@ -16,3 +16,7 @@ class InvalidStateError(DomainError):
 
 class ArtifactMissingError(DomainError):
     pass
+
+
+class CorruptedFileError(DomainError):
+    pass

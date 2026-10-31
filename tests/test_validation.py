@@ -1,8 +1,10 @@
 import pytest
 
 from config import settings
-from core.errors import ValidationError
+from core.errors import CorruptedFileError, ValidationError
 from domain.validation import validate_upload
+from infra.pdf_validator import PdfValidator
+from pdf_fixtures import make_encrypted_pdf, make_valid_pdf
 
 PDF = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n"
 DOCX = b"PK\x03\x04\x14\x00\x06\x00"
@@ -36,3 +38,15 @@ def test_illegal_filenames_rejected():
     for filename in ("../etc/passwd", "foo\\bar.txt", "   "):
         with pytest.raises(ValidationError):
             validate_upload(filename, b"x")
+
+
+def test_pdf_content_validation_via_port_adapter():
+    validator = PdfValidator()
+
+    assert validate_upload("contract.pdf", make_valid_pdf(), validator) == "pdf"
+
+    with pytest.raises(CorruptedFileError):
+        validate_upload("broken.pdf", b"%PDF-1.7\nbroken body", validator)
+
+    with pytest.raises(CorruptedFileError):
+        validate_upload("encrypted.pdf", make_encrypted_pdf(), validator)

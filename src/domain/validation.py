@@ -1,5 +1,8 @@
+from typing import Optional
+
 from config import settings
 from core.errors import ValidationError
+from domain.ports import DocumentValidator
 
 _MAGIC_PREFIXES = {
     "pdf": b"%PDF-",
@@ -43,7 +46,11 @@ def validate_magic(file_format: str, content: bytes) -> None:
         )
 
 
-def validate_upload(filename: str, content: bytes) -> str:
+def validate_upload(
+    filename: str,
+    content: bytes,
+    validator: Optional[DocumentValidator] = None,
+) -> str:
     validate_filename(filename)
 
     file_format = extract_extension(filename)
@@ -54,4 +61,6 @@ def validate_upload(filename: str, content: bytes) -> str:
 
     validate_size(len(content))
     validate_magic(file_format, content)
+    if file_format == "pdf" and validator is not None:
+        validator.validate_pdf(content)
     return file_format

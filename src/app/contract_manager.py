@@ -1,7 +1,7 @@
 import hashlib
 import uuid
 from datetime import datetime, timezone
-from typing import Mapping
+from typing import Mapping, Optional
 
 from core.contract import Contract
 from core.errors import ContractNotFoundError, InvalidStateError
@@ -9,6 +9,7 @@ from domain.cleaning import clean_text
 from domain.ports import (
     ContractRepository,
     DocumentParser,
+    DocumentValidator,
     DuplicateContractError,
     ParsingError,
     UnsupportedFormatError,
@@ -18,13 +19,17 @@ from domain.validation import validate_upload
 
 class ContractManager:
     def __init__(
-        self, repository: ContractRepository, parsers: Mapping[str, DocumentParser]
+        self,
+        repository: ContractRepository,
+        parsers: Mapping[str, DocumentParser],
+        validator: Optional[DocumentValidator] = None,
     ) -> None:
         self._repository = repository
         self._parsers = parsers
+        self._validator = validator
 
     def upload(self, filename: str, content: bytes) -> Contract:
-        file_format = validate_upload(filename, content)
+        file_format = validate_upload(filename, content, self._validator)
 
         sha256 = hashlib.sha256(content).hexdigest()
         existing = self._repository.find_by_sha256(sha256)

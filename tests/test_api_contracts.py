@@ -3,8 +3,9 @@ from fastapi.testclient import TestClient
 
 from api.app import create_app
 from infra.sqlite_repository import SQLiteContractRepository
+from pdf_fixtures import make_valid_pdf
 
-PDF = b"%PDF-1.7\nhello"
+PDF = make_valid_pdf()
 
 
 @pytest.fixture()
@@ -53,6 +54,13 @@ def test_post_duplicate_409_and_invalid_422(client):
     )
     assert invalid.status_code == 422
     assert ".exe" in invalid.json()["detail"]
+
+    corrupted = client.post(
+        "/contracts",
+        files={"file": ("broken.pdf", b"%PDF-1.7\nbroken body", "application/pdf")},
+    )
+    assert corrupted.status_code == 400
+    assert "PDF" in corrupted.json()["detail"]
 
 
 def test_get_existing_and_missing_contract(client):

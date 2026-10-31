@@ -16,11 +16,6 @@ from infra.txt_parser import TxtParser
 TXT = "劳动合同\n\n第一条　试用期三个月。\n第 1 页\n".encode("utf-8")
 
 
-class BrokenParser:
-    def parse(self, filename, content):
-        raise ParsingError("无法解析的 PDF")
-
-
 class ScriptedParser:
     def __init__(self) -> None:
         self.fail = False
@@ -33,7 +28,7 @@ class ScriptedParser:
 
 @pytest.fixture()
 def parse_client(tmp_path):
-    parsers = {"txt": TxtParser(), "pdf": BrokenParser()}
+    parsers = {"txt": TxtParser()}
     app = create_app(repository=SQLiteContractRepository(tmp_path), parsers=parsers)
     with TestClient(app) as client:
         yield client, tmp_path
@@ -89,18 +84,17 @@ def test_parse_txt_produces_artifacts(parse_client):
     assert "artifacts 丢失" in missing.json()["detail"]
 
 
-def test_parse_fake_pdf_fails_without_artifacts(parse_client):
-    client, tmp_path = parse_client
-    created = _upload(client, "broken.pdf", b"%PDF-1.7\nnot really a pdf")
+def test_corrupted_pdf_rejected_at_upload(parse_client):
+    client, _ = parse_client
 
-    response = client.post(f"/contracts/{created['contract_id']}/parse")
+    response = client.post(
+        "/contracts",
+        files={"file": ("broken.pdf", b"%PDF-1.7\nnot really a pdf", "application/pdf")},
+    )
 
-    assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "failed"
-    assert "无法解析的 PDF" in body["error"]
-    assert body["parsed_path"] is None
-    assert not (tmp_path / "files" / body["sha256"] / "artifacts").exists()
+    assert response.status_code == 400
+    assert "PDF" in response.json()["detail"]
+    assert client.get("/contracts").json() == []
 
 
 def test_reparse_is_idempotent(parse_client):

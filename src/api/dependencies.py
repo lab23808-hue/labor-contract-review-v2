@@ -14,4 +14,6 @@ def get_contract_manager(
     request: Request,
     repository: Annotated[ContractRepository, Depends(get_contract_repository)],
 ) -> ContractManager:
-    return ContractManager(repository, request.app.state.parsers)
+    return ContractManager(
+        repository, request.app.state.parsers, request.app.state.validator
+    )
