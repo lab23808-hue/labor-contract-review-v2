@@ -69,6 +69,25 @@ def test_parse_txt_produces_artifacts(parse_client):
     assert "第 1 页" not in cleaned
     assert "第一条 试用期三个月。" in cleaned
 
+    parsed_download = client.get(f"/contracts/{created['contract_id']}/parsed")
+    cleaned_download = client.get(f"/contracts/{created['contract_id']}/cleaned")
+    assert parsed_download.status_code == 200
+    assert parsed_download.headers["content-type"].startswith("text/markdown")
+    assert "contract.txt" in parsed_download.headers["content-disposition"]
+    assert parsed_download.content == parsed_file.read_bytes()
+    assert cleaned_download.status_code == 200
+    assert cleaned_download.headers["content-type"].startswith("text/plain")
+    assert cleaned_download.content == cleaned_file.read_bytes()
+
+    pending = _upload(client, "pending.txt", b"not parsed yet")
+    assert client.get(f"/contracts/{pending['contract_id']}/parsed").status_code == 409
+    assert client.get(f"/contracts/{pending['contract_id']}/cleaned").status_code == 409
+
+    cleaned_file.unlink()
+    missing = client.get(f"/contracts/{created['contract_id']}/cleaned")
+    assert missing.status_code == 500
+    assert "artifacts 丢失" in missing.json()["detail"]
+
 
 def test_parse_fake_pdf_fails_without_artifacts(parse_client):
     client, tmp_path = parse_client

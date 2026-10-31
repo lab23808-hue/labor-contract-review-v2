@@ -37,10 +37,15 @@ def test_post_contract_returns_201_with_all_fields(client):
 
 
 def test_post_duplicate_409_and_invalid_422(client):
-    assert _post_pdf(client).status_code == 201
+    created = _post_pdf(client).json()
+    assert created["contract_id"]
+
     duplicate = _post_pdf(client, filename="again.pdf")
+
     assert duplicate.status_code == 409
-    assert "sha256" in duplicate.json()["detail"]
+    detail = duplicate.json()["detail"]
+    assert "sha256" in detail
+    assert created["contract_id"] in detail
 
     invalid = client.post(
         "/contracts",

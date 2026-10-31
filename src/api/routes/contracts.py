@@ -1,12 +1,22 @@
 from typing import Annotated
+from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 
 from api.dependencies import get_contract_manager
 from app.contract_manager import ContractManager
 from core.contract import Contract
 
 router = APIRouter(tags=["contracts"])
+
+
+def _artifact_response(content: bytes, media_type: str, filename: str) -> Response:
+    headers = {
+        "Content-Disposition": (
+            f"attachment; filename=\"artifact\"; filename*=UTF-8''{quote(filename)}"
+        )
+    }
+    return Response(content=content, media_type=media_type, headers=headers)
 
 
 @router.post("/contracts", response_model=Contract, status_code=201)
@@ -41,3 +51,21 @@ def parse_contract(
     manager: Annotated[ContractManager, Depends(get_contract_manager)],
 ) -> Contract:
     return manager.parse(contract_id)
+
+
+@router.get("/contracts/{contract_id}/parsed")
+def get_parsed_artifact(
+    contract_id: str,
+    manager: Annotated[ContractManager, Depends(get_contract_manager)],
+) -> Response:
+    filename, content = manager.parsed_artifact(contract_id)
+    return _artifact_response(content, "text/markdown", filename)
+
+
+@router.get("/contracts/{contract_id}/cleaned")
+def get_cleaned_artifact(
+    contract_id: str,
+    manager: Annotated[ContractManager, Depends(get_contract_manager)],
+) -> Response:
+    filename, content = manager.cleaned_artifact(contract_id)
+    return _artifact_response(content, "text/plain", filename)

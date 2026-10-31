@@ -27,8 +27,11 @@ class ContractManager:
         file_format = validate_upload(filename, content)
 
         sha256 = hashlib.sha256(content).hexdigest()
-        if self._repository.exists_by_sha256(sha256):
-            raise DuplicateContractError(f"文件已存在：sha256={sha256}")
+        existing = self._repository.find_by_sha256(sha256)
+        if existing is not None:
+            raise DuplicateContractError(
+                f"文件已存在：contract_id={existing.contract_id}，sha256={sha256}"
+            )
 
         contract = Contract(
             contract_id=uuid.uuid4().hex,
@@ -55,6 +58,26 @@ class ContractManager:
 
     def exists_by_sha256(self, sha256: str) -> bool:
         return self._repository.exists_by_sha256(sha256)
+
+    def parsed_artifact(self, contract_id: str) -> tuple[str, bytes]:
+        contract = self._parsed_contract(contract_id)
+        if contract.parsed_path is None:
+            raise InvalidStateError(f"解析产物路径缺失：contract_id={contract_id}")
+        return contract.filename, self._repository.read_artifact(contract.parsed_path)
+
+    def cleaned_artifact(self, contract_id: str) -> tuple[str, bytes]:
+        contract = self._parsed_contract(contract_id)
+        if contract.cleaned_path is None:
+            raise InvalidStateError(f"清洗产物路径缺失：contract_id={contract_id}")
+        return contract.filename, self._repository.read_artifact(contract.cleaned_path)
+
+    def _parsed_contract(self, contract_id: str) -> Contract:
+        contract = self.get(contract_id)
+        if contract.status != "parsed":
+            raise InvalidStateError(
+                f"合同尚未解析完成，无法下载产物：contract_id={contract_id}，status={contract.status}"
+            )
+        return contract
 
     def parse(self, contract_id: str) -> Contract:
         contract = self.get(contract_id)

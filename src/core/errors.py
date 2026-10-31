@@ -12,3 +12,7 @@ class ContractNotFoundError(DomainError):
 
 class InvalidStateError(DomainError):
     pass
+
+
+class ArtifactMissingError(DomainError):
+    pass

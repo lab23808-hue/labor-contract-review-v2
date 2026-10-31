@@ -29,7 +29,7 @@ data/
             └── cleaned.txt                        # 清洗产物
 ```
 
-接口：`POST /contracts`、`GET /contracts/{id}`、`GET /contracts?limit=&offset=`、`POST /contracts/{id}/parse`。
+接口：`POST /contracts`、`GET /contracts/{id}`、`GET /contracts?limit=&offset=`、`POST /contracts/{id}/parse`、`GET /contracts/{id}/parsed`、`GET /contracts/{id}/cleaned`。
 测试：`.venv/Scripts/python.exe -m pytest -q` → **30 passed**。
 
 ## 依赖与模型（M3）
@@ -62,6 +62,15 @@ data/
 - **启动回收**：`reset_parsing_to_failed()` 在 FastAPI lifespan 启动时执行，把残留 `parsing` 记录改为 `failed`（error=`服务重启导致解析中断`）并返回影响行数。
 - **顺带**：`SQLiteContractRepository` 的"不支持的数据库版本"由 `RuntimeError` 改为 `UnsupportedSchemaVersionError`，使 `src/infra` 中的 `RuntimeError` 只出现在解析超时的包装路径。
 - **测试调整**：仅同步异常类型断言（`RuntimeError` → `ParsingError`），其余用例与断言未改；30 passed。
+
+## M3.6a 产物下载接口与去重提示
+
+- **`GET /contracts/{id}/parsed`**：返回 `text/markdown; charset=utf-8`；`GET /contracts/{id}/cleaned`：返回 `text/plain; charset=utf-8`；两者都带 `Content-Disposition: attachment; filename="artifact"; filename*=UTF-8''<原文件名>`。
+- **未解析合同选择 409**：合同资源存在、只是状态未到 `parsed`（`parsed_path` 为 null）。用 404 会让客户端误以为接口/合同不存在；409 表示"与当前状态冲突，解析完成后再试"，并复用已有的 `InvalidStateError` 映射。`uploaded/parsing/failed` 一律 409。
+- **路径安全**：接口不接受任何路径参数；`repository.read_artifact(relative_path)` 只读取 DB 中的相对路径，`resolve()` 后必须仍位于 `DATA_DIR` 内，越界直接报错。
+- **文件缺失**：DB 有记录但磁盘文件不存在 → `ArtifactMissingError` → 全局映射为 **500**，detail 含 `artifacts 丢失`。
+- **去重提示**：新增 `ContractRepository.find_by_sha256()`；service 预检查与 save 的 `INSERT` 冲突兜底都返回 `文件已存在：contract_id=<已有 id>，sha256=<sha>`。
+- 新增测试断言并入现有用例（下载成功/409/500、重复提示含 contract_id），测试总数仍为 30。
 
 ## 分层
 
@@ -159,3 +168,10 @@ M3 新发现问题：
 - 真实 txt：`status=parsed`，`artifacts/parsed.md`、`cleaned.txt` 正常，内容为「劳动合同 / 第一条 试用期三个月。」
 - 模拟中断：手工把记录改为 `status='parsing'` 后重启，`GET` 返回 `status=failed`，`error=服务重启导致解析中断`。
 - `pytest`：**30 passed**。
+
+## M3.6a 验收记录
+
+- demo 合同 `GET /parsed`、`GET /cleaned`：HTTP 200，`content-type` 分别为 `text/markdown; charset=utf-8` / `text/plain; charset=utf-8`，中文内容正常，`Content-Disposition` 带 `demo_contract.txt`。
+- 未解析的假 PDF：两个下载接口均返回 **409**，detail 为 `合同尚未解析完成，无法下载产物：contract_id=...，status=uploaded`。
+- 重复上传：**409**，detail 含已有 `contract_id`。
+- 文件缺失场景由测试覆盖：删除 `cleaned.txt` 后下载返回 500，detail 含 `artifacts 丢失`。

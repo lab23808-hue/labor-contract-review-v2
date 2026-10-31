@@ -31,10 +31,11 @@ def test_upload_returns_contract_and_get_roundtrips():
 
 def test_duplicate_and_validation_failures():
     manager = ContractManager(InMemoryContractRepository(), {})
-    manager.upload("contract.pdf", PDF)
+    existing = manager.upload("contract.pdf", PDF)
 
-    with pytest.raises(DuplicateContractError):
+    with pytest.raises(DuplicateContractError) as excinfo:
         manager.upload("copy.pdf", PDF)
+    assert existing.contract_id in str(excinfo.value)
 
     repository = Mock(spec=ContractRepository)
     with pytest.raises(ValidationError):

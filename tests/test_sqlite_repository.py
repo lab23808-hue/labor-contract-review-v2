@@ -43,8 +43,9 @@ def test_duplicate_and_exists_by_sha256(tmp_path):
     assert not repository.exists_by_sha256(contract.sha256)
     repository.save(contract, PDF)
     assert repository.exists_by_sha256(contract.sha256)
-    with pytest.raises(DuplicateContractError):
+    with pytest.raises(DuplicateContractError) as excinfo:
         repository.save(_contract(PDF), PDF)
+    assert contract.contract_id in str(excinfo.value)
 
 
 def test_list_orders_newest_first_and_paginates(tmp_path):

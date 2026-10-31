@@ -7,6 +7,7 @@ from typing import Optional, Union
 
 from config import settings
 from core.contract import Contract
+from core.errors import ArtifactMissingError
 from domain.ports import DuplicateContractError, StoredArtifacts
 
 logger = logging.getLogger(__name__)
@@ -141,8 +142,13 @@ class SQLiteContractRepository:
                 conn.rollback()
                 if getattr(exc, "sqlite_errorname", "") not in _DUPLICATE_ERRORS:
                     raise
+                existing = conn.execute(
+                    "SELECT contract_id FROM contracts WHERE sha256 = ?",
+                    (contract.sha256,),
+                ).fetchone()
+                existing_id = existing["contract_id"] if existing else "unknown"
                 raise DuplicateContractError(
-                    f"文件已存在：sha256={contract.sha256}"
+                    f"文件已存在：contract_id={existing_id}，sha256={contract.sha256}"
                 ) from exc
 
         path = self.content_path(contract)
@@ -181,6 +187,13 @@ class SQLiteContractRepository:
                 "SELECT 1 FROM contracts WHERE sha256 = ?", (sha256,)
             ).fetchone()
         return row is not None
+
+    def find_by_sha256(self, sha256: str) -> Optional[Contract]:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM contracts WHERE sha256 = ?", (sha256,)
+            ).fetchone()
+        return _row_to_contract(row) if row is not None else None
 
     def list(self, limit: int, offset: int) -> list[Contract]:
         with closing(self._connect()) as conn:
@@ -241,6 +254,15 @@ class SQLiteContractRepository:
             (directory / name).unlink(missing_ok=True)
         if not any(directory.iterdir()):
             directory.rmdir()
+
+    def read_artifact(self, relative_path: str) -> bytes:
+        path = (self.data_dir / relative_path).resolve()
+        root = self.data_dir.resolve()
+        if path != root and root not in path.parents:
+            raise ArtifactMissingError(f"artifacts 路径非法：{relative_path}")
+        if not path.is_file():
+            raise ArtifactMissingError(f"artifacts 丢失：{relative_path}")
+        return path.read_bytes()
 
     def reset_parsing_to_failed(self) -> int:
         """把 status='parsing' 的记录改为 failed，error 记'服务重启导致解析中断'。返回影响行数。"""
