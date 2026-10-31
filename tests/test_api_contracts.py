@@ -9,7 +9,8 @@ PDF = b"%PDF-1.7\nhello"
 
 @pytest.fixture()
 def client(tmp_path):
-    with TestClient(create_app(repository=SQLiteContractRepository(tmp_path))) as http:
+    app = create_app(repository=SQLiteContractRepository(tmp_path), parsers={})
+    with TestClient(app) as http:
         yield http
 
 
@@ -32,25 +33,21 @@ def test_post_contract_returns_201_with_all_fields(client):
     assert body["error"] is None
     assert body["contract_id"]
     assert body["created_at"]
+    assert body["parsed_path"] is None
 
 
-def test_post_duplicate_returns_409(client):
+def test_post_duplicate_409_and_invalid_422(client):
     assert _post_pdf(client).status_code == 201
+    duplicate = _post_pdf(client, filename="again.pdf")
+    assert duplicate.status_code == 409
+    assert "sha256" in duplicate.json()["detail"]
 
-    response = _post_pdf(client, filename="again.pdf")
-
-    assert response.status_code == 409
-    assert "sha256" in response.json()["detail"]
-
-
-def test_post_invalid_file_returns_422(client):
-    response = client.post(
+    invalid = client.post(
         "/contracts",
         files={"file": ("malware.exe", b"contents", "application/octet-stream")},
     )
-
-    assert response.status_code == 422
-    assert ".exe" in response.json()["detail"]
+    assert invalid.status_code == 422
+    assert ".exe" in invalid.json()["detail"]
 
 
 def test_get_existing_and_missing_contract(client):
@@ -63,7 +60,7 @@ def test_get_existing_and_missing_contract(client):
     assert client.get("/contracts/does-not-exist").status_code == 404
 
 
-def test_list_contracts_paginates(client):
+def test_list_pagination_and_invalid_params(client):
     created = []
     for index in range(3):
         response = client.post(
@@ -82,15 +79,12 @@ def test_list_contracts_paginates(client):
     assert len(client.get("/contracts").json()) == 3
     page1 = client.get("/contracts", params={"limit": 2}).json()
     page2 = client.get("/contracts", params={"limit": 2, "offset": 2}).json()
-
     assert len(page1) == 2
     assert len(page2) == 1
     assert {item["contract_id"] for item in page1 + page2} == set(created)
 
-
-@pytest.mark.parametrize("params", [{"limit": 101}, {"limit": 0}, {"offset": -1}])
-def test_list_rejects_invalid_pagination(client, params):
-    assert client.get("/contracts", params=params).status_code == 422
+    for params in ({"limit": 101}, {"limit": 0}, {"offset": -1}):
+        assert client.get("/contracts", params=params).status_code == 422
 
 
 def test_restart_keeps_contracts_visible(tmp_path):

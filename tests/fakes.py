@@ -1,7 +1,7 @@
 from typing import Optional
 
 from core.contract import Contract
-from domain.ports import DuplicateContractError
+from domain.ports import DuplicateContractError, StoredArtifacts
 
 
 class InMemoryContractRepository:
@@ -9,6 +9,7 @@ class InMemoryContractRepository:
         self._contracts: dict[str, Contract] = {}
         self._by_sha256: dict[str, str] = {}
         self.contents: dict[str, bytes] = {}
+        self.artifacts: dict[str, tuple[bytes, bytes]] = {}
 
     def save(self, contract: Contract, content: bytes) -> None:
         if contract.sha256 in self._by_sha256:
@@ -27,3 +28,21 @@ class InMemoryContractRepository:
         ordered = sorted(self._contracts.values(), key=lambda contract: contract.sha256)
         ordered.sort(key=lambda contract: contract.created_at, reverse=True)
         return ordered[offset : offset + limit]
+
+    def update(self, contract: Contract) -> None:
+        self._contracts[contract.contract_id] = contract
+
+    def read_content(self, contract: Contract) -> bytes:
+        return self.contents[contract.contract_id]
+
+    def write_artifacts(
+        self, contract: Contract, parsed_markdown: bytes, cleaned_text: bytes
+    ) -> StoredArtifacts:
+        self.artifacts[contract.contract_id] = (parsed_markdown, cleaned_text)
+        return StoredArtifacts(
+            parsed_path=f"memory/{contract.contract_id}/parsed.md",
+            cleaned_path=f"memory/{contract.contract_id}/cleaned.txt",
+        )
+
+    def remove_artifacts(self, contract: Contract) -> None:
+        self.artifacts.pop(contract.contract_id, None)

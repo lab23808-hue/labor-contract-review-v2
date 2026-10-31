@@ -8,21 +8,20 @@ PDF = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n"
 DOCX = b"PK\x03\x04\x14\x00\x06\x00"
 
 
-def test_pdf_magic_consistency():
+def test_pdf_and_docx_magic_consistency():
     assert validate_upload("contract.pdf", PDF) == "pdf"
+    assert validate_upload("contract.docx", DOCX) == "docx"
     with pytest.raises(ValidationError):
         validate_upload("contract.pdf", b"not a pdf")
-
-
-def test_docx_magic_consistency():
-    assert validate_upload("contract.docx", DOCX) == "docx"
     with pytest.raises(ValidationError):
         validate_upload("contract.docx", b"not a zip")
 
 
-def test_txt_skips_magic_and_encoding_checks():
+def test_txt_skips_magic_and_extension_case_is_normalized():
     assert validate_upload("劳动合同.txt", "试用期三个月。".encode("utf-8")) == "txt"
     assert validate_upload("data.txt", bytes(range(256))) == "txt"
+    assert validate_upload("CONTRACT.PDF", PDF) == "pdf"
+    assert validate_upload("contract.DocX", DOCX) == "docx"
 
 
 def test_size_boundaries():
@@ -37,8 +36,3 @@ def test_illegal_filenames_rejected():
     for filename in ("../etc/passwd", "foo\\bar.txt", "   "):
         with pytest.raises(ValidationError):
             validate_upload(filename, b"x")
-
-
-def test_extension_case_normalized():
-    assert validate_upload("CONTRACT.PDF", PDF) == "pdf"
-    assert validate_upload("contract.DocX", DOCX) == "docx"
