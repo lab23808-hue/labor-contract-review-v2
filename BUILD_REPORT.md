@@ -38,6 +38,7 @@ data/
 |------|------|------|
 | mineru | 4.1.3 | PDF/JPG/PNG 解析（CLI + 本地 doclib 服务） |
 | python-docx | 1.2.0 | docx 解析 |
+| pypdf | 6.21.4 | 上传时 PDF 结构/页数/加密前置校验（原为 MinerU 传递依赖，M3.6b 起显式声明） |
 | （MinerU 传递依赖） | onnxruntime-directml 1.24.4、modelscope 1.40.2、gradio 6.31.0 等 | Python 3.13 全部使用轮子，无需编译 |
 
 安装命令与耗时：
@@ -70,7 +71,32 @@ data/
 - **路径安全**：接口不接受任何路径参数；`repository.read_artifact(relative_path)` 只读取 DB 中的相对路径，`resolve()` 后必须仍位于 `DATA_DIR` 内，越界直接报错。
 - **文件缺失**：DB 有记录但磁盘文件不存在 → `ArtifactMissingError` → 全局映射为 **500**，detail 含 `artifacts 丢失`。
 - **去重提示**：新增 `ContractRepository.find_by_sha256()`；service 预检查与 save 的 `INSERT` 冲突兜底都返回 `文件已存在：contract_id=<已有 id>，sha256=<sha>`。
-- 新增测试断言并入现有用例（下载成功/409/500、重复提示含 contract_id），测试总数仍为 30。
+- 新增测试断言并入现有用例（下载成功/409/500、重复提示含 contract_id），M3.6a 时测试总数为 30；M3.6b 增加 PDF 内容校验用例后为 31。
+
+## M3.6b PDF 前置校验与 MinerU 崩溃调查
+
+### A. 上传时 PDF 前置校验
+
+- 领域端口新增 `DocumentValidator`，适配器 `infra/pdf_validator.py` 用 **pypdf** 打开 PDF：打不开 / 加密 / 页数为 0 → `CorruptedFileError`（`core/errors.py`）。
+- `validate_upload(filename, content, validator)` 增加可注入的校验器参数；`ContractManager.upload()` 传入组合根装配的 `PdfValidator`，domain 不 import pypdf。
+- API 全局映射 `CorruptedFileError → 400`，detail 形如 `PDF 内容损坏，无法打开：Stream has ended unexpectedly`。
+- 校验器在魔数检查之后执行，假 PDF（`%PDF-` 头 + 损坏内容）在上传阶段即被拒绝，不再进入解析。
+
+### B. MinerU 崩溃机制调查（只调查，未改修复代码）
+
+调查方法：直接调用 `mineru parse` 复现（应用侧已被 A 拦截），失败后立即解析正常 PDF，并检查服务 PID、GPU 显存、日志与锁文件。
+
+| 观测项 | 结果 |
+|--------|------|
+| 架构 | `mineru_parser.py` 每次请求起一个 `mineru parse` 子进程；该 CLI 是本地 doclib 服务（TCP 15980）的客户端，真正的模型推理在长驻 managed parse-server（`mineru.parser.api_server`，basic 档，端口 16580）中完成 |
+| 假 PDF 结果 | CLI exit 1，`PDFium: Data format error`；doclib 记为 `Parse execution failed`，parse-server stderr 打印 traceback |
+| 服务状态 | 失败前后 PID 均为 38632（运行时长连续增长），**未退出、未重启** |
+| 连坐验证 | 失败后立刻解析正常 PDF：成功，约 28 秒，输出 `<!-- page 1 of 1 -->` |
+| GPU 显存 | 基线 886MiB / 6144MiB；正常 PDF 推理时 1924MiB；无 OOM |
+| 锁文件 | 仅 `~/.mineru/doclib.lock`（服务启动时间 15:13），失败后未变化，无残留解析锁 |
+| 历史"服务消失" | 日志无 shutdown/exit 记录；13:59–14:00 有 managed parse-server 健康检查重启（WinError 10013 后第 3 次成功），doclib 进程在 14:01–15:13 间无日志消失，归因于守护进程生命周期而非 PDF |
+
+**结论**：损坏 PDF 不会打崩 MinerU 服务，只会让当前解析任务失败，应用侧本来就会把合同标为 `failed`。此前的"MinerU 被假 PDF 打崩"是误判。A 项前置校验把这类文件挡在上传阶段；剩余风险是校验器（pypdf）与 MinerU（PDFium）解析能力不完全一致——pypdf 能打开但 PDFium 无法渲染的文件仍可能进入解析并失败（表现为 `failed`，不会影响服务或其他合同）。
 
 ## 分层
 
@@ -147,7 +173,8 @@ M3 新发现问题：
 7. **页码启发式误伤**：独立数字行（如 "1"）会被当作页码删除，可能误删纯数字条款编号。
 8. **MinerU 运行时文件**：服务在仓库工作目录生成 `blobs/` 与 `.mineru-service.lock`，已在 `.gitignore` 忽略；真实数据目录 `data/` 亦被忽略。
 9. **except 收窄后的异常契约**：解析器新增异常类型必须显式纳入 `ParsingError` 体系；否则会以 500 暴露（有意设计，避免仓储/程序错误被伪装成 `failed`）。
-10. **MinerU 本地服务可能被损坏文件打崩**：实测假 PDF 触发 PDFium 异常后 doclib 服务退出；应用侧仍正确返回 `failed`，但需要重新 `mineru server start`。
+10. **MinerU 服务与损坏文件（M3.6b 复核，推翻此前的误判）**：受控实验显示，损坏 PDF 只让该次解析任务失败——doclib 记录 `Parse execution failed`，parse-server 打印 Pdfium traceback，但服务 PID 不变；紧接着解析正常 PDF 成功、无连坐。此前"假 PDF 打崩服务"的判断不成立：日志显示 13:59 发生过 managed parse-server 健康检查重启（伴随 WinError 10013），doclib 进程在 14:01–15:13 之间无日志退出，更像从临时 shell 启动的守护进程生命周期问题。M3.6b 的上传前置校验仍会阻止此类文件进入解析。
+11. **managed parse-server 重启可能遇到 WinError 10013**：13:59–14:00 健康检查连续重启时出现"访问权限不允许的套接字尝试"，第 3 次重试成功。MinerU 内部重试可恢复；若持续失败，PDF 解析不可用（与损坏文件无关）。
 
 ## 验收记录
 
@@ -175,3 +202,11 @@ M3 新发现问题：
 - 未解析的假 PDF：两个下载接口均返回 **409**，detail 为 `合同尚未解析完成，无法下载产物：contract_id=...，status=uploaded`。
 - 重复上传：**409**，detail 含已有 `contract_id`。
 - 文件缺失场景由测试覆盖：删除 `cleaned.txt` 后下载返回 500，detail 含 `artifacts 丢失`。
+
+## M3.6b 验收记录
+
+- 假 PDF（`%PDF-1.7` 头 + 损坏内容）上传 → **400**，detail=`PDF 内容损坏，无法打开：Stream has ended unexpectedly`，列表无新记录。
+- 正常 PDF 上传 → **201**，status=`uploaded`。
+- 加密 PDF、0 页 PDF 由 `validate_upload` 单元测试覆盖，均抛 `CorruptedFileError`。
+- `pytest`：**31 passed**。
+- MinerU 调查：损坏 PDF 仅单任务失败、服务 PID 不变、无连坐、无残留锁；详见上节结论。
