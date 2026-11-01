@@ -110,7 +110,7 @@ data/
 ## M3.7 删除接口与并发防御
 
 - **`DELETE /contracts/{id}`**：返回 204；不存在 404；`status=parsing` 时 409；其他状态放行。路径仅由账本行的 `sha256` 推导（`DATA_DIR/files/<sha256>/`），不接受客户端路径。
-- **失败顺序**：`repository.delete()` 先 `BEGIN IMMEDIATE` 取得写锁 → 校验行/状态 → `shutil.rmtree` 删除整目录 → 删除账本行 → 提交。磁盘不可回滚、DB 可回滚：磁盘删除失败时回滚并保留账行（宁可账上有账、仓库缺房），由 `StorageDeleteError` 映射 500；事务写锁也避免删除与 parse 抢占交错。
+- **失败顺序**：`repository.delete()` 先 `BEGIN IMMEDIATE` 取得写锁 → 校验行/状态 → `shutil.rmtree` 删除整目录 → 删除账本行 → 提交。磁盘不可回滚、DB 可回滚：磁盘删除失败时回滚并保留账行（宁可账上有账、仓库缺房），由 `StorageDeleteError` 映射 500；事务写锁也避免删除与 parse 抢占交错。镜像风险已登记于已知问题 17。
 - **上传查重（2a）**：`sha256` 自 v1 起就是 `PRIMARY KEY`（SQLite autoindex，隐含 UNIQUE），INSERT 冲突已转成 `DuplicateContractError` 并在 detail 带已有 `contract_id`；无需新增 UNIQUE 索引或迁移（2c 不适用）。并发双 POST 由数据库唯一约束兜底，恰有一份 201。
 - **解析抢占（2b）**：`claim_for_parsing()` 用单条原子 `UPDATE ... SET status='parsing' WHERE contract_id=? AND status IN ('uploaded','parsed','failed')`；受影响 1 行 → 202 + 后台任务，0 行 → 存在则 409、不存在则 404。保留 M3/M3.6c 已验收的 `parsed/failed` 可重解析能力（与字面 SQL 的 `status='uploaded'` 不同，经确认采用此版本）。
 - **测试**：新增 `tests/test_delete_contract.py`（4 条）与 `tests/test_concurrency.py`（3 条），总计 **39 passed**；未创建/引用 `test.txt`。
@@ -198,6 +198,7 @@ M3 新发现问题：
 14. **删除期间持有 SQLite 写锁**：`DELETE` 在 `BEGIN IMMEDIATE` 事务内执行 `rmtree`，期间其他写请求等待（busy timeout 5s）；目录很大时可能超时失败。
 15. **删除中途崩溃**：事务回滚会保留账行，但磁盘可能已被部分删除，之后 `GET` 会因原文缺失告警；跨资源删除无法完全原子，属已知取舍。
 16. **并发双 parse 的 409 窗口**：仅当第一条仍处于 `parsing` 时第二条才 409；若第一条极快完成，第二条会按“可重解析”返回 202（这是保留重解析能力的既有语义，非竞态）。
+17. **DELETE 镜像风险**：DELETE 采用「先删磁盘目录、后删账本行」顺序。若 `rmtree` 成功但随后 SQLite 事务提交失败（本地单机场景概率极低），会出现账上有记录但磁盘目录已删除的账实不符：`GET` 返回该记录，但 `parsed_path` / `files` 路径指向不存在的目录。处置：登记为已知问题，不返工；若未来需要修复，方案为删除后启动时对账（扫描账本行校验目录存在性，缺失则标记 `failed` 或清理账行）。
 
 ## 验收记录
 
