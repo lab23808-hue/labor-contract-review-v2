@@ -1,7 +1,9 @@
 import json
-import sys
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class TraceRecorder:
@@ -22,4 +24,6 @@ class TraceRecorder:
     def log(self, message: str) -> None:
         with self.log_path.open("a", encoding="utf-8") as handle:
             handle.write(message + "\n")
-        print(f"[trace] {message}", file=sys.stderr)
+        logger.info(
+            "", extra={"event": "pipeline.trace", "detail": message}
+        )

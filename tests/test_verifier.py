@@ -27,6 +27,14 @@ def test_keeps_exact_excerpt():
     assert result["other_observations"] == []
 
 
+def _drop_records(caplog):
+    return [
+        record
+        for record in caplog.records
+        if getattr(record, "event", None) == "verifier.drop"
+    ]
+
+
 def test_drops_tampered_excerpt_and_logs(caplog):
     tampered = "试用期二个月"
     output = {
@@ -50,9 +58,17 @@ def test_drops_tampered_excerpt_and_logs(caplog):
 
     assert result["risks"] == []
     assert [item["note"] for item in result["other_observations"]] == ["可保留"]
-    assert "丢弃 LLM risk" in caplog.text
-    assert tampered in caplog.text
-    assert "丢弃 LLM observation" in caplog.text
+    drops = _drop_records(caplog)
+    assert len(drops) == 2
+    risk_drop = next(record for record in drops if record.kind == "risk")
+    assert risk_drop.levelno == logging.WARNING
+    assert risk_drop.reason == "excerpt 不命中"
+    assert risk_drop.risk_type == "probation_exceed"
+    assert risk_drop.excerpt == tampered
+    observation_drop = next(
+        record for record in drops if record.kind == "observation"
+    )
+    assert observation_drop.risk_type is None
 
 
 @pytest.mark.parametrize(
@@ -97,7 +113,11 @@ def test_drops_excerpt_with_deleted_or_extra_chars(tampered, caplog):
         result = verify_llm_output(output, CLEANED)
 
     assert result["risks"] == []
-    assert tampered in caplog.text
+    drops = _drop_records(caplog)
+    assert len(drops) == 1
+    assert drops[0].reason == "excerpt 不命中"
+    assert drops[0].risk_type == "probation_exceed"
+    assert drops[0].excerpt == tampered
 
 
 def test_drops_risk_when_is_violation_is_false(caplog):
@@ -114,9 +134,12 @@ def test_drops_risk_when_is_violation_is_false(caplog):
         result = verify_llm_output(output, CLEANED)
 
     assert result["risks"] == []
-    assert "is_violation 不为 true" in caplog.text
-    assert '"is_violation": false' in caplog.text
-    assert "边界情形，经计算不构成违规" in caplog.text
+    drops = _drop_records(caplog)
+    assert len(drops) == 1
+    assert drops[0].levelno == logging.WARNING
+    assert drops[0].reason == "is_violation=false"
+    assert drops[0].risk_type == "probation_exceed"
+    assert drops[0].entry["explanation"] == "边界情形，经计算不构成违规"
 
 
 def test_drops_risk_when_is_violation_is_missing(caplog):
@@ -136,5 +159,8 @@ def test_drops_risk_when_is_violation_is_missing(caplog):
         result = verify_llm_output(output, CLEANED)
 
     assert result["risks"] == []
-    assert "is_violation 不为 true" in caplog.text
-    assert "缺少裁决字段" in caplog.text
+    drops = _drop_records(caplog)
+    assert len(drops) == 1
+    assert drops[0].reason == "字段缺失"
+    assert drops[0].risk_type == "probation_exceed"
+    assert drops[0].entry["explanation"] == "缺少裁决字段"

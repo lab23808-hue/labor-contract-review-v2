@@ -1,0 +1,27 @@
+{
+  "risks": [
+    {
+      "risk_type": "probation_exceed",
+      "severity": "high",
+      "excerpt": "劳动合同书",
+      "explanation": "",
+      "is_violation": true,
+      "source": "llm"
+    }
+  ],
+  "other_observations": [
+    {
+      "excerpt": "劳动合同书",
+      "note": "",
+      "source": "llm"
+    }
+  ],
+  "meta": {
+    "llm_failed": false,
+    "risk_count": 1,
+    "sources": {
+      "rules": 0,
+      "llm": 1
+    }
+  }
+}

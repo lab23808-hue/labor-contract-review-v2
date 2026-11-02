@@ -2,7 +2,10 @@
 
 import argparse
 import json
+import logging
+import secrets
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -16,6 +19,9 @@ from domain.cleaning import clean_text
 from domain.extractor import extract_fields
 from infra.docx_parser import DocxParser
 from infra.txt_parser import TxtParser
+from logging_setup import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 def _read_parsed(path: Path) -> str:
@@ -32,10 +38,6 @@ def _read_parsed(path: Path) -> str:
     raise SystemExit(f"不支持的文件类型：{suffix or '(无扩展名)'}")
 
 
-def _read_cleaned(path: Path) -> str:
-    return clean_text(_read_parsed(path))
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m src.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -44,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     review.add_argument(
         "--trace",
         action="store_true",
-        help="把各阶段中间产物写入 trace_<时间戳>/",
+        help="把各阶段中间产物写入 trace_<run_id>/",
     )
     args = parser.parse_args(argv)
 
@@ -55,18 +57,48 @@ def main(argv: list[str] | None = None) -> int:
     if not path.is_file():
         raise SystemExit(f"文件不存在：{path}")
 
+    run_id = _new_run_id()
+    setup_logging(run_id)
+    started = time.monotonic()
+    logger.info(
+        "",
+        extra={
+            "event": "pipeline.run_start",
+            "run_id": run_id,
+            "path": str(path.resolve()),
+            "size": path.stat().st_size,
+            "suffix": path.suffix,
+        },
+    )
+
+    parsed_text = _read_parsed(path)
+    cleaned_text = clean_text(parsed_text)
+    removed = len(parsed_text) - len(cleaned_text)
+    logger.info(
+        "",
+        extra={
+            "event": "pipeline.parse_done",
+            "chars": len(parsed_text),
+        },
+    )
+    logger.info(
+        "",
+        extra={
+            "event": "pipeline.clean_done",
+            "chars": len(cleaned_text),
+            "removed": removed,
+        },
+    )
+
     trace_dir = None
     if args.trace:
-        parsed_text = _read_parsed(path)
-        cleaned_text = clean_text(parsed_text)
-        trace_dir = _create_trace_dir()
+        trace_dir = _create_trace_dir(run_id)
         recorder = TraceRecorder(trace_dir)
         meta = {
             "path": str(path.resolve()),
             "size": path.stat().st_size,
             "suffix": path.suffix,
         }
-        removed = len(parsed_text) - len(cleaned_text)
         recorder.write_json("00_input.meta.json", meta)
         recorder.write_text(
             "01_parsed.txt",
@@ -86,21 +118,34 @@ def main(argv: list[str] | None = None) -> int:
         )
         recorder.log(f"parsed chars={len(parsed_text)}")
         recorder.log(f"cleaned chars={len(cleaned_text)} removed={removed}")
-    else:
-        cleaned_text = _read_cleaned(path)
 
     report = run_full_review(
         cleaned_text,
         extract_fields(cleaned_text),
         trace_dir=trace_dir,
+        run_id=run_id,
+    )
+    elapsed = round(time.monotonic() - started, 3)
+    logger.info(
+        "",
+        extra={
+            "event": "pipeline.run_done",
+            "run_id": run_id,
+            "risk_count": report["meta"]["risk_count"],
+            "elapsed": elapsed,
+        },
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 
 
-def _create_trace_dir() -> Path:
+def _new_run_id() -> str:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base = Path(f"trace_{stamp}")
+    return f"{stamp}_{secrets.token_hex(3)}"
+
+
+def _create_trace_dir(run_id: str) -> Path:
+    base = Path(f"trace_{run_id}")
     candidate = base
     index = 1
     while candidate.exists():

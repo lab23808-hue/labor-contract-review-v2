@@ -1,10 +1,26 @@
+import copy
 import json
 from pathlib import Path
 
+import pytest
+
 from cli import main
 from infra.llm_client import FakeLLM
+from logging_setup import reset_logging
 
 FIXTURES = Path(__file__).parent / "fixtures" / "realistic"
+
+
+@pytest.fixture(autouse=True)
+def _close_logging():
+    yield
+    reset_logging()
+
+
+def _without_run_id(report):
+    normalized = copy.deepcopy(report)
+    normalized["meta"].pop("run_id", None)
+    return normalized
 
 LLM_RESPONSE = {
     "risks": [
@@ -70,8 +86,9 @@ def test_trace_mode_writes_all_artifacts_and_matches_plain_report(
 
     assert main(["review", str(fixture), "--trace"]) == 0
     captured = capsys.readouterr()
-    assert json.loads(captured.out) == plain
-    assert "[trace]" in captured.err
+    traced_stdout = json.loads(captured.out)
+    assert _without_run_id(traced_stdout) == _without_run_id(plain)
+    assert "verifier.drop" in captured.err
 
     trace_dirs = sorted(tmp_path.glob("trace_*"))
     assert len(trace_dirs) == 1
@@ -82,7 +99,22 @@ def test_trace_mode_writes_all_artifacts_and_matches_plain_report(
     traced = json.loads(
         (trace_dir / "08_final_report.json").read_text(encoding="utf-8")
     )
-    assert traced == plain
+    assert traced == traced_stdout
+    assert _without_run_id(traced) == _without_run_id(plain)
+
+    run_id = traced["meta"]["run_id"]
+    assert trace_dir.name == f"trace_{run_id}"
+    log_path = tmp_path / "logs" / f"review_{run_id}.log"
+    assert log_path.is_file()
+    log_lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert log_lines
+    payloads = [json.loads(line) for line in log_lines]
+    events = {payload["event"] for payload in payloads}
+    assert "pipeline.run_start" in events
+    assert "pipeline.run_done" in events
+    assert "verifier.drop" in events
+    assert "merger.arbitrate" in events
+    assert all("run_id" in payload for payload in payloads)
 
     meta = json.loads(
         (trace_dir / "00_input.meta.json").read_text(encoding="utf-8")
@@ -123,7 +155,7 @@ def test_trace_mode_writes_all_artifacts_and_matches_plain_report(
     merger = json.loads(
         (trace_dir / "07_merger.json").read_text(encoding="utf-8")
     )
-    assert merger["report"] == plain
+    assert _without_run_id(merger["report"]) == _without_run_id(plain)
     actions = {item["action"] for item in merger["arbitration"]}
     assert "keep_rule" in actions
     assert "keep_llm" in actions

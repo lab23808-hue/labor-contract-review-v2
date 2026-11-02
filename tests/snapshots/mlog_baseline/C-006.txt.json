@@ -1,0 +1,34 @@
+{
+  "risks": [
+    {
+      "risk_type": "probation_exceed",
+      "severity": "high",
+      "excerpt": "劳 动 合 同 书",
+      "explanation": "",
+      "is_violation": true,
+      "source": "llm"
+    },
+    {
+      "source": "rules",
+      "risk_type": "social_security_missing",
+      "severity": "high",
+      "excerpt": "",
+      "explanation": "合同全文未见任何社会保险相关条款"
+    }
+  ],
+  "other_observations": [
+    {
+      "excerpt": "劳 动 合 同 书",
+      "note": "",
+      "source": "llm"
+    }
+  ],
+  "meta": {
+    "llm_failed": false,
+    "risk_count": 2,
+    "sources": {
+      "rules": 1,
+      "llm": 1
+    }
+  }
+}

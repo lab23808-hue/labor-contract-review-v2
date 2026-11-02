@@ -12,7 +12,6 @@
 7. 排序：high→medium→low，同级按 risk_type 字典序。
 """
 
-import json
 import logging
 from typing import Any, Optional
 
@@ -34,7 +33,9 @@ def merge_review(
     for risk in llm_output.get("risks") or []:
         risk_type = risk.get("risk_type")
         if not risk_type:
-            logger.warning("丢弃缺少 risk_type 的 LLM 风险：%r", risk)
+            logger.warning(
+                "", extra={"event": "merger.drop_missing_type", "entry": risk}
+            )
             if trace_out is not None:
                 trace_out.append(
                     {"action": "drop_llm_missing_type", "entry": risk}
@@ -45,6 +46,14 @@ def merge_review(
     final_risks = []
     for risk in rules_risks:
         final_risks.append(_with_source(risk, "rules"))
+        logger.debug(
+            "",
+            extra={
+                "event": "merger.keep_rule",
+                "risk_type": risk["risk_type"],
+                "excerpt": risk.get("excerpt"),
+            },
+        )
         if trace_out is not None:
             trace_out.append(
                 {
@@ -57,9 +66,15 @@ def merge_review(
     for risk_type, llm_risks in llm_by_type.items():
         if risk_type in rule_types:
             for risk in llm_risks:
-                logger.warning(
-                    "同 risk_type 双源命中，丢弃 LLM 版：%s",
-                    json.dumps(risk, ensure_ascii=False),
+                logger.info(
+                    "",
+                    extra={
+                        "event": "merger.arbitrate",
+                        "risk_type": risk_type,
+                        "winner": "rules",
+                        "loser": "llm",
+                        "excerpt": risk.get("excerpt"),
+                    },
                 )
                 if trace_out is not None:
                     trace_out.append(
@@ -72,6 +87,15 @@ def merge_review(
             continue
         for risk in llm_risks:
             final_risks.append(_with_source(risk, "llm"))
+            logger.info(
+                "",
+                extra={
+                    "event": "merger.arbitrate",
+                    "risk_type": risk_type,
+                    "winner": "llm",
+                    "excerpt": risk.get("excerpt"),
+                },
+            )
             if trace_out is not None:
                 trace_out.append(
                     {
@@ -82,7 +106,7 @@ def merge_review(
                 )
 
     if llm_failed:
-        logger.warning("LLM 分支失败，报告仅保留规则结果")
+        logger.warning("", extra={"event": "merger.llm_failed"})
 
     final_risks = sorted(
         final_risks,

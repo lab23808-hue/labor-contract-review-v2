@@ -44,6 +44,7 @@ def run_full_review(
     extract_json: dict[str, Any],
     llm_client: Optional[LLMClient] = None,
     trace_dir: Optional[Path] = None,
+    run_id: Optional[str] = None,
 ) -> dict[str, Any]:
     recorder = TraceRecorder(trace_dir) if trace_dir is not None else None
 
@@ -58,13 +59,36 @@ def run_full_review(
     rules_risks = [
         risk for risks in rule_outputs.values() for risk in risks
     ]
+    counts = {name: len(risks) for name, risks in rule_outputs.items()}
+    for name, risks in rule_outputs.items():
+        if risks:
+            logger.info(
+                "",
+                extra={
+                    "event": "rules.hit",
+                    "rule": name,
+                    "count": len(risks),
+                    "risk_types": [
+                        risk["risk_type"] for risk in risks
+                    ],
+                },
+            )
+        else:
+            logger.debug(
+                "", extra={"event": "rules.silent", "rule": name}
+            )
+    logger.info(
+        "",
+        extra={
+            "event": "pipeline.stage_done",
+            "stage": "rules",
+            "counts": counts,
+        },
+    )
 
     if recorder is not None:
         recorder.write_json("03_extraction.json", extract_json)
         recorder.write_json("04_rules.json", rule_outputs)
-        counts = {
-            name: len(risks) for name, risks in rule_outputs.items()
-        }
         recorder.log(f"rules {counts}")
 
     raw_out = {} if recorder is not None else None
@@ -99,8 +123,36 @@ def run_full_review(
             )
         )
 
+    logger.info(
+        "",
+        extra={
+            "event": "pipeline.stage_done",
+            "stage": "llm",
+            "raw_risks": (
+                len(raw_out.get("risks") or [])
+                if raw_out is not None
+                else None
+            ),
+            "verified_risks": len(llm_output.get("risks") or []),
+            "dropped": len(dropped) if dropped is not None else None,
+        },
+    )
+
     arbitration = [] if recorder is not None else None
     report = merge_review(rules_risks, llm_output, trace_out=arbitration)
+
+    if run_id is not None:
+        report["meta"]["run_id"] = run_id
+
+    logger.info(
+        "",
+        extra={
+            "event": "pipeline.stage_done",
+            "stage": "merger",
+            "risk_count": report["meta"]["risk_count"],
+            "sources": report["meta"]["sources"],
+        },
+    )
 
     if recorder is not None:
         recorder.write_json(

@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import Any, Optional
 
 from openai import OpenAI
@@ -24,14 +25,66 @@ class DeepSeekLLMClient:
     def call_llm(self, prompt: str) -> dict[str, Any]:
         last_error = ""
         for attempt in (1, 2):
+            started = time.monotonic()
+            logger.info(
+                "",
+                extra={
+                    "event": "llm.call_start",
+                    "attempt": attempt,
+                    "model": self._config.model,
+                },
+            )
             try:
-                return json.loads(self._request(prompt))
+                raw = self._request(prompt)
+                parsed = json.loads(raw)
             except (json.JSONDecodeError, TypeError, ValueError) as exc:
+                elapsed = round(time.monotonic() - started, 3)
                 last_error = f"{type(exc).__name__}: {exc}"
                 logger.warning(
-                    "LLM 返回无法解析为 JSON（第 %d 次）：%s", attempt, last_error
+                    "",
+                    extra={
+                        "event": "llm.call_failed",
+                        "attempt": attempt,
+                        "elapsed": elapsed,
+                        "error": last_error,
+                    },
                 )
-        logger.error("LLM 连续两次返回非 JSON，标记 llm_failed：%s", last_error)
+                if attempt == 1:
+                    logger.warning(
+                        "",
+                        extra={
+                            "event": "llm.retry",
+                            "attempt": 2,
+                            "error": last_error,
+                        },
+                    )
+            except Exception as exc:
+                elapsed = round(time.monotonic() - started, 3)
+                logger.warning(
+                    "",
+                    extra={
+                        "event": "llm.call_failed",
+                        "attempt": attempt,
+                        "elapsed": elapsed,
+                        "error": f"{type(exc).__name__}: {exc}",
+                    },
+                )
+                raise
+            else:
+                elapsed = round(time.monotonic() - started, 3)
+                logger.info(
+                    "",
+                    extra={
+                        "event": "llm.call_done",
+                        "attempt": attempt,
+                        "elapsed": elapsed,
+                    },
+                )
+                return parsed
+
+        logger.error(
+            "", extra={"event": "llm.failed", "error": last_error}
+        )
         return {
             "risks": [],
             "other_observations": [],

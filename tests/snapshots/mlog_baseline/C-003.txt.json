@@ -1,0 +1,41 @@
+{
+  "risks": [
+    {
+      "risk_type": "probation_exceed",
+      "severity": "high",
+      "excerpt": "劳动合同书",
+      "explanation": "",
+      "is_violation": true,
+      "source": "llm"
+    },
+    {
+      "source": "rules",
+      "risk_type": "illegal_penalty",
+      "severity": "medium",
+      "excerpt": "乙方在合同期内提前离职的，应向甲方支付违约金人民币20000元",
+      "explanation": "本条约定由劳动者承担违约金。依据《劳动合同法》第二十五条，除服务期（第二十二条）和竞业限制（第二十三条）情形外，用人单位不得约定由劳动者承担违约金；若本条不属于上述两种情形，则该约定违法。"
+    },
+    {
+      "source": "rules",
+      "risk_type": "illegal_penalty",
+      "severity": "medium",
+      "excerpt": "乙方离职后未提前三十日书面通知甲方的，另行支付违约金5000元",
+      "explanation": "本条约定由劳动者承担违约金。依据《劳动合同法》第二十五条，除服务期（第二十二条）和竞业限制（第二十三条）情形外，用人单位不得约定由劳动者承担违约金；若本条不属于上述两种情形，则该约定违法。"
+    }
+  ],
+  "other_observations": [
+    {
+      "excerpt": "劳动合同书",
+      "note": "",
+      "source": "llm"
+    }
+  ],
+  "meta": {
+    "llm_failed": false,
+    "risk_count": 3,
+    "sources": {
+      "rules": 2,
+      "llm": 1
+    }
+  }
+}

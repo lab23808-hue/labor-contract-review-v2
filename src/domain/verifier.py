@@ -1,4 +1,3 @@
-import json
 import logging
 import re
 from typing import Any, Optional
@@ -42,7 +41,9 @@ def _filter_items(
 ) -> list[dict[str, Any]]:
     if not isinstance(items, list):
         if items is not None:
-            logger.warning("LLM %s 字段不是数组，已清空：%r", label, items)
+            logger.warning(
+                "", extra={"event": "verifier.invalid_field", "kind": label}
+            )
         return []
 
     kept: list[dict[str, Any]] = []
@@ -51,28 +52,49 @@ def _filter_items(
         if not _excerpt_matches(excerpt, normalized_text):
             _record_drop(dropped, label, item, "excerpt 不命中")
             logger.warning(
-                "丢弃 LLM %s：excerpt 不在原文中：%r", label, excerpt
+                "",
+                extra={
+                    "event": "verifier.drop",
+                    "kind": label,
+                    "reason": "excerpt 不命中",
+                    "risk_type": _risk_type(item),
+                    "excerpt": excerpt,
+                },
             )
             continue
         if require_violation:
             if not isinstance(item, dict) or "is_violation" not in item:
                 _record_drop(dropped, label, item, "字段缺失")
                 logger.warning(
-                    "丢弃 LLM %s：is_violation 不为 true：%s",
-                    label,
-                    json.dumps(item, ensure_ascii=False),
+                    "",
+                    extra={
+                        "event": "verifier.drop",
+                        "kind": label,
+                        "reason": "字段缺失",
+                        "risk_type": _risk_type(item),
+                        "entry": item,
+                    },
                 )
                 continue
             if item.get("is_violation") is not True:
                 _record_drop(dropped, label, item, "is_violation=false")
                 logger.warning(
-                    "丢弃 LLM %s：is_violation 不为 true：%s",
-                    label,
-                    json.dumps(item, ensure_ascii=False),
+                    "",
+                    extra={
+                        "event": "verifier.drop",
+                        "kind": label,
+                        "reason": "is_violation=false",
+                        "risk_type": _risk_type(item),
+                        "entry": item,
+                    },
                 )
                 continue
         kept.append(item)
     return kept
+
+
+def _risk_type(item: Any) -> Any:
+    return item.get("risk_type") if isinstance(item, dict) else None
 
 
 def _record_drop(

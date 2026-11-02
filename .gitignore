@@ -7,3 +7,5 @@ blobs/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+logs/
+trace_*/
