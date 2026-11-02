@@ -4,7 +4,7 @@
       "risk_type": "probation_exceed",
       "severity": "high",
       "excerpt": "双方约定试用期为三个月，劳动合同期限为两年。",
-      "explanation": "合同期限为两年（满1年不足3年），试用期上限为2个月，约定3个月已超过上限。"
+      "explanation": "合同期限为两年（满1年不足3年），试用期法定上限为2个月，约定3个月已超过上限。"
     },
     {
       "risk_type": "term_inconsistent",
