@@ -1,0 +1,78 @@
+{
+  "G-01.txt": {
+    "defect": "clean",
+    "expected_risks": [],
+    "notes": "干净基线，用于误报检查"
+  },
+  "G-02.txt": {
+    "defect": "probation_exceed",
+    "expected_risks": ["probation_exceed"]
+  },
+  "G-03.txt": {
+    "defect": "social_missing_one",
+    "expected_risks": [],
+    "known_boundary": "五险缺一：确定性规则只查社会保险关键词，不校验五险完整性；LLM 按清单不应报 social_security_missing"
+  },
+  "G-04.txt": {
+    "defect": "illegal_penalty",
+    "expected_risks": ["illegal_penalty"]
+  },
+  "G-05.txt": {
+    "defect": "noncompete_no_pay_cross_clause",
+    "expected_risks": ["noncompete_no_pay"],
+    "notes": "M11 野题：条款外经济补偿不计入"
+  },
+  "G-06.txt": {
+    "defect": "term_inconsistent",
+    "expected_risks": ["term_inconsistent"]
+  },
+  "G-07.txt": {
+    "defect": "wage_below_floor",
+    "expected_risks": ["wage_below_floor"],
+    "notes": "LLM 单源：抽取器尚无 probation_salary 字段"
+  },
+  "G-08.txt": {
+    "defect": "delete_social_security",
+    "expected_risks": ["social_security_missing"]
+  },
+  "G-09.txt": {
+    "defect": "delete_remuneration",
+    "expected_risks": [],
+    "known_boundary": "劳动报酬整条缺失：无对应 risk_type"
+  },
+  "G-10.txt": {
+    "defect": "delete_contract_term",
+    "expected_risks": [],
+    "known_boundary": "合同期限整条缺失：无对应 risk_type"
+  },
+  "G-11.txt": {
+    "defect": "probation_exceed_rewrite",
+    "expected_risks": ["probation_exceed"],
+    "notes": "阿拉伯数字 + 条款顺序打乱"
+  },
+  "G-12.txt": {
+    "defect": "illegal_penalty_rewrite",
+    "expected_risks": ["illegal_penalty"],
+    "notes": "同义改写，保留「违约金」关键词"
+  },
+  "G-13.txt": {
+    "defect": "term_inconsistent_rewrite",
+    "expected_risks": ["term_inconsistent"],
+    "notes": "日期区间前置 + 声明后置"
+  },
+  "G-14.txt": {
+    "defect": "noncompete_no_pay_rewrite",
+    "expected_risks": ["noncompete_no_pay"],
+    "notes": "同义改写 + 条款外正面经济补偿"
+  },
+  "G-15.txt": {
+    "defect": "wage_below_floor_rewrite",
+    "expected_risks": ["wage_below_floor"],
+    "notes": "LLM 单源：12000 元工资 + 9000 元试用期工资"
+  },
+  "G-16.txt": {
+    "defect": "delete_social_security_rewrite",
+    "expected_risks": ["social_security_missing"],
+    "notes": "整条删除社会保险 + 条款顺序打乱"
+  }
+}
