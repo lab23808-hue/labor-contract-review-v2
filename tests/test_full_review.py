@@ -21,12 +21,14 @@ def test_full_review_rules_win_on_synthetic_0001():
                 "severity": "medium",
                 "excerpt": "双方约定试用期为三个月，劳动合同期限为两年。",
                 "explanation": "LLM 版",
+                "is_violation": True,
             },
             {
                 "risk_type": "term_inconsistent",
                 "severity": "high",
                 "excerpt": "合同期限自2025年02月14日起至2028年02月14日止。",
                 "explanation": "LLM 版",
+                "is_violation": True,
             },
         ],
         "other_observations": [

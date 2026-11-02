@@ -12,12 +12,14 @@ def test_fake_llm_chain_keeps_valid_and_drops_fabricated():
                 "severity": "high",
                 "excerpt": "试用期三个月",
                 "explanation": "正文命中",
+                "is_violation": True,
             },
             {
                 "risk_type": "illegal_penalty",
                 "severity": "medium",
                 "excerpt": "原文没有这句",
                 "explanation": "编造",
+                "is_violation": True,
             },
         ],
         "other_observations": [

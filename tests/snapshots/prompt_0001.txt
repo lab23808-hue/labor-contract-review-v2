@@ -65,4 +65,4 @@
 
 
 【输出格式】
-只输出 JSON，结构为 {"risks": [...], "other_observations": [...]}。risks 每条 {"risk_type": "上述清单中的名称", "severity": "high/medium/low", "excerpt": "<逐字来自原文>", "explanation": "一句话说明"}。清单外的可疑条款放 other_observations，每条 {"excerpt", "note"}，不得放入 risks。没有风险则 risks 为空数组。
+只输出 JSON，结构为 {"risks": [...], "other_observations": [...]}。risks 每条 {"risk_type": "上述清单中的名称", "severity": "high/medium/low", "excerpt": "<逐字来自原文>", "explanation": "一句话说明", "is_violation": true|false}。is_violation 为 true 表示经核对确认为违规；false 表示存疑、边界情形或经计算不构成违规——为 false 时同样写入 risks 数组，由下游处理。清单外的可疑条款放 other_observations，每条 {"excerpt", "note"}，不得放入 risks。没有风险则 risks 为空数组。

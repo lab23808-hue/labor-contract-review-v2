@@ -15,6 +15,7 @@ def test_keeps_exact_excerpt():
                 "severity": "high",
                 "excerpt": "试用期三个月",
                 "explanation": "超过上限",
+                "is_violation": True,
             }
         ],
         "other_observations": [],
@@ -35,6 +36,7 @@ def test_drops_tampered_excerpt_and_logs(caplog):
                 "severity": "high",
                 "excerpt": tampered,
                 "explanation": "编造",
+                "is_violation": True,
             }
         ],
         "other_observations": [
@@ -65,6 +67,7 @@ def test_keeps_excerpt_when_only_whitespace_differs(excerpt):
                 "severity": "medium",
                 "excerpt": excerpt,
                 "explanation": "低于 80%",
+                "is_violation": True,
             }
         ],
         "other_observations": [],
@@ -84,6 +87,7 @@ def test_drops_excerpt_with_deleted_or_extra_chars(tampered, caplog):
                 "severity": "high",
                 "excerpt": tampered,
                 "explanation": "编造",
+                "is_violation": True,
             }
         ],
         "other_observations": [],
@@ -94,3 +98,43 @@ def test_drops_excerpt_with_deleted_or_extra_chars(tampered, caplog):
 
     assert result["risks"] == []
     assert tampered in caplog.text
+
+
+def test_drops_risk_when_is_violation_is_false(caplog):
+    entry = {
+        "risk_type": "probation_exceed",
+        "severity": "high",
+        "excerpt": "试用期三个月",
+        "explanation": "边界情形，经计算不构成违规",
+        "is_violation": False,
+    }
+    output = {"risks": [entry], "other_observations": []}
+
+    with caplog.at_level(logging.WARNING):
+        result = verify_llm_output(output, CLEANED)
+
+    assert result["risks"] == []
+    assert "is_violation 不为 true" in caplog.text
+    assert '"is_violation": false' in caplog.text
+    assert "边界情形，经计算不构成违规" in caplog.text
+
+
+def test_drops_risk_when_is_violation_is_missing(caplog):
+    output = {
+        "risks": [
+            {
+                "risk_type": "probation_exceed",
+                "severity": "high",
+                "excerpt": "试用期三个月",
+                "explanation": "缺少裁决字段",
+            }
+        ],
+        "other_observations": [],
+    }
+
+    with caplog.at_level(logging.WARNING):
+        result = verify_llm_output(output, CLEANED)
+
+    assert result["risks"] == []
+    assert "is_violation 不为 true" in caplog.text
+    assert "缺少裁决字段" in caplog.text
