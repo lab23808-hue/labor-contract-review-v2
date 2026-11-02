@@ -52,7 +52,7 @@ def run_full_review(
         "probation": _as_list(judge_probation(extract_json)),
         "term_conflict": _as_list(judge_term_conflict(extract_json)),
         "social_security": _as_list(judge_social_security(cleaned_text)),
-        "wage": _as_list(judge_wage(extract_json)),
+        "wage": _as_list(judge_wage(cleaned_text)),
         "penalty": judge_penalty(cleaned_text),
         "noncompete": judge_noncompete(cleaned_text),
     }

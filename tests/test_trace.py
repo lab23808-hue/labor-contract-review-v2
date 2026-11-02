@@ -32,6 +32,13 @@ LLM_RESPONSE = {
             "is_violation": True,
         },
         {
+            "risk_type": "open_ended_denied",
+            "severity": "medium",
+            "excerpt": "试用期间月工资为3200元",
+            "explanation": "LLM 单源",
+            "is_violation": True,
+        },
+        {
             "risk_type": "probation_exceed",
             "severity": "high",
             "excerpt": "试用期间月工资为3200元",

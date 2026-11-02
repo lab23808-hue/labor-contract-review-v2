@@ -14,6 +14,13 @@
       "severity": "high",
       "excerpt": "",
       "explanation": "合同全文未见任何社会保险相关条款"
+    },
+    {
+      "source": "rules",
+      "risk_type": "wage_below_floor",
+      "severity": "medium",
+      "excerpt": "试用期间月工资为3200元",
+      "explanation": "试用期工资 3200 低于转正工资 6000 的 80%（3200/6000=53% < 80%）"
     }
   ],
   "other_observations": [
@@ -25,9 +32,9 @@
   ],
   "meta": {
     "llm_failed": false,
-    "risk_count": 2,
+    "risk_count": 3,
     "sources": {
-      "rules": 1,
+      "rules": 2,
       "llm": 1
     }
   }

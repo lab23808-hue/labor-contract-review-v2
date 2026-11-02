@@ -34,10 +34,13 @@
 
 ## 2. 实跑结论
 
-- 15 / 16 与 GT 一致。
+- 15 / 16 与 GT 一致（M12 当时记录）。
 - G-15 在 4 次独立运行中均为 0 risks：LLM 未报 `wage_below_floor`，
   规则侧因抽取器尚无 `probation_salary` 字段而沉默。这是本轮记录的
   LLM 召回缺口，GT 保留期望值，不为过语料修改规则或措辞。
+- **M13-w 更新**：试用期工资比例已收编进 rules，G-07 与 G-15 均由规则
+  命中，真实语料重跑 16/16。上面的 G-15 miss 保留为 M12 的历史记录，
+  当前边界见 `docs/m13w_retest.md`。
 - G-08 由规则抓到 `social_security_missing`；G-09、G-10 如预期没有
   对应 risk_type，GT 留空并记入已知边界。
 
@@ -49,9 +52,8 @@
    `expected_risks` 为空。
 3. **合同期限整条缺失（G-10）**：`term_inconsistent` 只处理前后矛盾，
    不处理缺失，`expected_risks` 为空。
-4. **工资下限的 LLM 单源（G-07 / G-15）**：规则没有
-   `probation_salary` 字段；G-07 本轮命中，G-15 连续 4 次未命中。
-   这是模型召回波动，不是规则回归。
+4. **工资下限（G-07 / G-15）**：M13-w 已收编进 rules；当前边界是缺任一
+   数字或非数字比例表述不报，见 `docs/m13w_retest.md`。
 
 ## 4. 复现
 

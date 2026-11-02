@@ -14,6 +14,9 @@ OPEN_ENDED_FIXTURE = (
 NONCOMPETE_FIXTURE = (
     Path(__file__).parent / "fixtures" / "realistic" / "C-008.txt"
 )
+WAGE_FIXTURE = (
+    Path(__file__).parent / "corpus_gen" / "generated" / "G-15.txt"
+)
 
 
 def _inputs() -> tuple[str, dict]:
@@ -182,4 +185,37 @@ def test_c008_noncompete_rules_and_llm_are_merged():
         "llm_failed": False,
         "risk_count": 2,
         "sources": {"rules": 1, "llm": 1},
+    }
+
+
+def test_wage_rule_wins_over_llm_dual_source():
+    text = WAGE_FIXTURE.read_text(encoding="utf-8")
+    llm_response = {
+        "risks": [
+            {
+                "risk_type": "wage_below_floor",
+                "severity": "high",
+                "excerpt": "试用期月工资为9000元",
+                "explanation": "LLM 版",
+                "is_violation": True,
+            }
+        ],
+        "other_observations": [],
+    }
+
+    report = run_full_review(
+        text, extract_fields(text), FakeLLM(llm_response)
+    )
+
+    wages = [
+        risk
+        for risk in report["risks"]
+        if risk["risk_type"] == "wage_below_floor"
+    ]
+    assert len(wages) == 1
+    assert wages[0]["source"] == "rules"
+    assert report["meta"] == {
+        "llm_failed": False,
+        "risk_count": 1,
+        "sources": {"rules": 1, "llm": 0},
     }
