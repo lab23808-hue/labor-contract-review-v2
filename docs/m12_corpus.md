@@ -55,9 +55,18 @@
 
 ## 4. 复现
 
+生成与同步校验（不调用 LLM）：
+
 ```bash
 python tests/corpus_gen/generate.py
 python tests/corpus_gen/generate.py --check
+```
+
+真实审查（调用 `.env` 中的 DeepSeek，16 次请求）：
+
+```powershell
+.venv\Scripts\python.exe tests\corpus_gen\run_corpus.py
+.venv\Scripts\python.exe tests\corpus_gen\run_corpus.py --observed
 ```
 
 `tests/test_corpus_gen.py` 会校验脚本输出、已提交的 generated 文件与
