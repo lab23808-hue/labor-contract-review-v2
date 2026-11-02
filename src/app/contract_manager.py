@@ -1,11 +1,17 @@
 import asyncio
 import hashlib
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Sequence
 
 from core.contract import Contract
-from core.errors import ContractNotFoundError, InvalidStateError
+from core.errors import (
+    ContractNotFoundError,
+    CorruptedFileError,
+    InvalidStateError,
+    ValidationError,
+)
 from domain.cleaning import clean_text
 from domain.ports import (
     ContractRepository,
@@ -16,6 +22,14 @@ from domain.ports import (
     UnsupportedFormatError,
 )
 from domain.validation import validate_upload
+
+
+@dataclass(frozen=True)
+class BatchItem:
+    filename: str
+    contract_id: Optional[str]
+    status: int
+    detail: str
 
 
 class ContractManager:
@@ -52,6 +66,27 @@ class ContractManager:
 
     def save(self, contract: Contract, content: bytes) -> None:
         self._repository.save(contract, content)
+
+    def batch_upload(self, files: Sequence[tuple[str, bytes]]) -> list[BatchItem]:
+        results: list[BatchItem] = []
+        for filename, content in files:
+            try:
+                contract = self.upload(filename, content)
+            except DuplicateContractError as exc:
+                existing = self._repository.find_by_sha256(
+                    hashlib.sha256(content).hexdigest()
+                )
+                existing_id = existing.contract_id if existing is not None else None
+                results.append(BatchItem(filename, existing_id, 409, str(exc)))
+            except CorruptedFileError as exc:
+                results.append(BatchItem(filename, None, 400, str(exc)))
+            except ValidationError as exc:
+                results.append(BatchItem(filename, None, 422, str(exc)))
+            else:
+                results.append(
+                    BatchItem(filename, contract.contract_id, 201, "uploaded")
+                )
+        return results
 
     def get(self, contract_id: str) -> Contract:
         contract = self._repository.get(contract_id)

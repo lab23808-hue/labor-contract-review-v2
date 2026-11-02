@@ -1,5 +1,5 @@
 import asyncio
-from typing import Annotated
+from typing import Annotated, Optional
 from urllib.parse import quote
 
 from fastapi import (
@@ -11,12 +11,34 @@ from fastapi import (
     Response,
     UploadFile,
 )
+from pydantic import BaseModel
 
 from api.dependencies import get_contract_manager, get_parse_semaphore
 from app.contract_manager import ContractManager, run_parse_task
+from config import settings
 from core.contract import Contract
+from core.errors import ValidationError
 
 router = APIRouter(tags=["contracts"])
+
+
+class BatchItemResponse(BaseModel):
+    filename: str
+    contract_id: Optional[str]
+    status: int
+    detail: str
+
+
+class BatchSummary(BaseModel):
+    total: int
+    succeeded: int
+    failed: int
+
+
+class BatchUploadResponse(BaseModel):
+    items: list[BatchItemResponse]
+    summary: BatchSummary
+
 
 def _artifact_response(content: bytes, media_type: str, filename: str) -> Response:
     headers = {
@@ -34,6 +56,59 @@ async def upload_contract(
 ) -> Contract:
     content = await file.read()
     return manager.upload(file.filename or "", content)
+
+
+@router.post("/contracts/batch", response_model=BatchUploadResponse)
+async def upload_batch(
+    files: Annotated[list[UploadFile], File(...)],
+    background_tasks: BackgroundTasks,
+    manager: Annotated[ContractManager, Depends(get_contract_manager)],
+    semaphore: Annotated[asyncio.Semaphore, Depends(get_parse_semaphore)],
+) -> BatchUploadResponse:
+    if len(files) > settings.MAX_BATCH_FILES:
+        raise ValidationError(
+            f"批量上传文件数 {len(files)} 超过上限 {settings.MAX_BATCH_FILES}"
+        )
+
+    contents: list[tuple[str, bytes]] = []
+    total_bytes = 0
+    for upload in files:
+        content = await upload.read()
+        total_bytes += len(content)
+        if total_bytes > settings.MAX_BATCH_BYTES:
+            raise ValidationError(
+                f"批量上传总大小超过上限 {settings.MAX_BATCH_BYTES} 字节"
+            )
+        contents.append((upload.filename or "", content))
+
+    items: list[BatchItemResponse] = []
+    succeeded = 0
+    for item in manager.batch_upload(contents):
+        detail = item.detail
+        if item.status == 201:
+            manager.start_parse(item.contract_id)
+            background_tasks.add_task(
+                run_parse_task, manager, item.contract_id, semaphore
+            )
+            detail = "uploaded, parse scheduled"
+            succeeded += 1
+        items.append(
+            BatchItemResponse(
+                filename=item.filename,
+                contract_id=item.contract_id,
+                status=item.status,
+                detail=detail,
+            )
+        )
+
+    return BatchUploadResponse(
+        items=items,
+        summary=BatchSummary(
+            total=len(items),
+            succeeded=succeeded,
+            failed=len(items) - succeeded,
+        ),
+    )
 
 
 @router.get("/contracts", response_model=list[Contract])
