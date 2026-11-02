@@ -62,12 +62,16 @@ python tests/corpus_gen/generate.py
 python tests/corpus_gen/generate.py --check
 ```
 
-真实审查（调用 `.env` 中的 DeepSeek，16 次请求）：
+真实审查（显式构造 DeepSeek 客户端，读取 `.env` 配置，16 次请求；启动时
+打印 model、run_id、日志路径，每份文件打印 `llm_failed`）：
 
 ```powershell
 .venv\Scripts\python.exe tests\corpus_gen\run_corpus.py
 .venv\Scripts\python.exe tests\corpus_gen\run_corpus.py --observed
 ```
+
+`logs/review_corpus_<timestamp>.log` 中每次调用都有 `llm.call_start` 和
+`llm.call_done`（含 elapsed），可用于确认确实走了真实 LLM。
 
 `tests/test_corpus_gen.py` 会校验脚本输出、已提交的 generated 文件与
 expected.json 三者一致；该测试不调用审查管道。
