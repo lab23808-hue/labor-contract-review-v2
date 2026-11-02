@@ -8,6 +8,12 @@ FIXTURE = Path(__file__).parent / "fixtures" / "contracts" / "synthetic_0001.txt
 PENALTY_FIXTURE = (
     Path(__file__).parent / "fixtures" / "realistic" / "C-003.txt"
 )
+OPEN_ENDED_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "realistic" / "C-007.txt"
+)
+NONCOMPETE_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "realistic" / "C-008.txt"
+)
 
 
 def _inputs() -> tuple[str, dict]:
@@ -108,4 +114,72 @@ def test_c003_penalty_rule_reports_two_rule_risks():
         "llm_failed": False,
         "risk_count": 2,
         "sources": {"rules": 2, "llm": 0},
+    }
+
+
+def test_c007_open_ended_denied_llm_risk_is_kept():
+    text = OPEN_ENDED_FIXTURE.read_text(encoding="utf-8")
+    llm_response = {
+        "risks": [
+            {
+                "risk_type": "open_ended_denied",
+                "severity": "medium",
+                "excerpt": (
+                    "本合同期满后如续签，仍为固定期限劳动合同，"
+                    "乙方不得要求签订无固定期限劳动合同。"
+                ),
+                "explanation": "排除劳动者签订无固定期限合同的权利",
+                "is_violation": True,
+            }
+        ],
+        "other_observations": [],
+    }
+
+    report = run_full_review(
+        text, extract_fields(text), FakeLLM(llm_response)
+    )
+
+    assert [risk["risk_type"] for risk in report["risks"]] == [
+        "open_ended_denied"
+    ]
+    assert report["risks"][0]["source"] == "llm"
+    assert report["meta"] == {
+        "llm_failed": False,
+        "risk_count": 1,
+        "sources": {"rules": 0, "llm": 1},
+    }
+
+
+def test_c008_noncompete_rules_and_llm_are_merged():
+    text = NONCOMPETE_FIXTURE.read_text(encoding="utf-8")
+    llm_response = {
+        "risks": [
+            {
+                "risk_type": "noncompete_exceed",
+                "severity": "medium",
+                "excerpt": "乙方离职后三年内不得入职与甲方有竞争关系的单位",
+                "explanation": "竞业限制期限三年，超过两年上限",
+                "is_violation": True,
+            }
+        ],
+        "other_observations": [],
+    }
+
+    report = run_full_review(
+        text, extract_fields(text), FakeLLM(llm_response)
+    )
+
+    assert [risk["risk_type"] for risk in report["risks"]] == [
+        "noncompete_no_pay",
+        "noncompete_exceed",
+    ]
+    assert [risk["source"] for risk in report["risks"]] == ["rules", "llm"]
+    assert report["risks"][0]["excerpt"] == (
+        "乙方离职后三年内不得入职与甲方有竞争关系的单位，"
+        "竞业限制期间甲方无需支付任何补偿"
+    )
+    assert report["meta"] == {
+        "llm_failed": False,
+        "risk_count": 2,
+        "sources": {"rules": 1, "llm": 1},
     }

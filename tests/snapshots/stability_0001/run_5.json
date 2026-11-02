@@ -2,23 +2,23 @@
   "risks": [
     {
       "risk_type": "probation_exceed",
-      "severity": "medium",
+      "severity": "high",
       "excerpt": "双方约定试用期为三个月，劳动合同期限为两年。",
-      "explanation": "按已知信息合同期限24个月（满1年不足3年），试用期上限为2个月，约定3个月超过上限。",
+      "explanation": "合同期限为两年（满1年不足3年），试用期法定上限为2个月，约定3个月已超过上限。",
       "is_violation": true
     },
     {
       "risk_type": "term_inconsistent",
       "severity": "medium",
       "excerpt": "合同期限自2025年02月14日起至2028年02月14日止。",
-      "explanation": "该日期区间推算为36个月，与已知信息24个月及第2条“劳动合同期限为两年”矛盾。",
+      "explanation": "该日期区间推算为36个月，与已知的24个月合同期限不一致，前后表述矛盾。",
       "is_violation": true
     }
   ],
   "other_observations": [
     {
       "excerpt": "第2条 试用期期限超过上限",
-      "note": "条款标题直接写明“超过上限”，属异常表述，建议核对条款文本。"
+      "note": "条款标题本身直接写明“试用期期限超过上限”，属异常表述，建议核实文本来源。"
     }
   ]
 }
