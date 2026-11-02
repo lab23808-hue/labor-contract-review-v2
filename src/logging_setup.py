@@ -38,6 +38,15 @@ class _EventFilter(logging.Filter):
         return hasattr(record, "event")
 
 
+class _ConsoleFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "event"):
+            return False
+        if record.levelno >= logging.WARNING:
+            return True
+        return record.event == "pipeline.trace"
+
+
 class _RunIdFilter(logging.Filter):
     def __init__(self, run_id: str) -> None:
         super().__init__()
@@ -51,10 +60,14 @@ class _RunIdFilter(logging.Filter):
 class _ConsoleFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         event = getattr(record, "event", record.name)
-        return (
+        line = (
             f"{self.formatTime(record, '%Y-%m-%d %H:%M:%S')} "
             f"{record.levelname} {event}"
         )
+        detail = getattr(record, "detail", None)
+        if detail:
+            line = f"{line} {detail}"
+        return line
 
 
 class _JsonLineFormatter(logging.Formatter):
@@ -87,9 +100,9 @@ def setup_logging(run_id: str) -> Path:
     root.setLevel(logging.DEBUG)
 
     console = logging.StreamHandler(sys.stderr)
-    console.setLevel(logging.WARNING)
+    console.setLevel(logging.INFO)
     console.setFormatter(_ConsoleFormatter())
-    console.addFilter(_EventFilter())
+    console.addFilter(_ConsoleFilter())
     console.addFilter(_RunIdFilter(run_id))
 
     file_handler = logging.FileHandler(log_path, encoding="utf-8")

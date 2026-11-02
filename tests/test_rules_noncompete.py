@@ -49,9 +49,36 @@ def test_no_compensation_variant_reports_and_skips_title_clause():
 
 
 def test_title_keyword_suppresses_report_current_behavior():
-    # 封闭的全文关键词判定会被标题中的「竞业限制补偿」骗过；
-    # 此处如实记录该已知边界，不额外加启发式。
+    # 条款作用域收窄后，标题段若自身含「竞业限制补偿」，它就是唯一的
+    # 竞业限制条款，补偿关键词仍在条款内，因此仍被判为已约定补偿。
+    # 这是标题型条款的已知边界，不额外加启发式。
     text = "劳动合同\n竞业限制补偿：乙方放弃补偿，甲方无需支付。\n"
+
+    assert judge_noncompete(text) == []
+
+
+def test_compensation_outside_noncompete_clause_does_not_count():
+    text = (
+        "劳动合同\n"
+        "第十条 竞业限制：乙方离职后两年内不得入职与甲方有竞争关系的单位，"
+        "竞业限制期限内无经济补偿。"
+        "第十六条 经济补偿：合同解除或终止时，经济补偿按工作年限计算。\n"
+    )
+
+    risks = judge_noncompete(text)
+
+    assert len(risks) == 1
+    assert risks[0]["risk_type"] == "noncompete_no_pay"
+    assert "竞业限制期限内无经济补偿" in risks[0]["excerpt"]
+    assert "按工作年限计算" not in risks[0]["excerpt"]
+
+
+def test_compensation_inside_noncompete_clause_is_not_reported():
+    text = (
+        "劳动合同\n"
+        "第十条 竞业限制：乙方离职后两年内不得入职与甲方有竞争关系的单位，"
+        "竞业限制期限内甲方按月支付经济补偿。\n"
+    )
 
     assert judge_noncompete(text) == []
 
@@ -89,7 +116,7 @@ def test_monthly_compensation_is_positive():
 def test_positive_mention_after_negative_keeps_compensation():
     text = (
         "劳动合同\n"
-        "双方约定竞业限制，无经济补偿。甲方按月支付经济补偿。\n"
+        "双方约定竞业限制，无经济补偿，甲方按月支付经济补偿。\n"
     )
 
     assert judge_noncompete(text) == []

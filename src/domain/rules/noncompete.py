@@ -1,15 +1,14 @@
 """竞业限制经济补偿缺失规则。
 
-全文出现竞业限制/竞业禁止时，检查补偿关键词的每次命中：向前回看最多
-4 个字符，若窗口内出现「无」「没有」「不」「放弃」「无需」「免于」之一，
-该命中视为否定式提及，不计为补偿存在。所有命中均被否定或无命中时，
+先取包含竞业限制关键词的最长子句作为竞业限制条款，只在该条款内做补偿
+关键词与否定回看；条款外的经济补偿提及不计入。条款内每个补偿关键词命中
+向前回看最多 4 个字符，若窗口内出现「无」「没有」「不」「放弃」「无需」
+「免于」之一，该命中视为否定式提及。条款内所有命中均被否定或无命中时，
 报一条 noncompete_no_pay。
 
-补偿判定仍是封闭的全文关键词检查：标题中的「竞业限制补偿」如果没有
-否定前缀，也会被视为已约定补偿，这是该启发式的已知边界。
-
-excerpt 取包含竞业限制关键词的最长子句，避免只取到「第六条 竞业限制」
-这类独立标题。切句边界沿用 penalty：句号、分号、换行、冒号，标题段独立。
+已知边界：条款间引用（如「补偿标准见第X条」）不会跟进；如果标题本身含
+「竞业限制补偿」且被选为条款，仍会被视为已约定补偿。切句边界沿用
+penalty：句号、分号、换行、冒号，标题段独立。
 """
 
 import re
@@ -33,8 +32,8 @@ def judge_noncompete(cleaned_text: str) -> list[dict[str, Any]]:
     if not _NONCOMPETE_OCCURRENCE.search(cleaned_text):
         return []
 
-    normalized = _WHITESPACE.sub("", cleaned_text)
-    if _has_compensation(normalized):
+    clause = _longest_clause(cleaned_text)
+    if _has_compensation(clause):
         return []
 
     return [
@@ -42,7 +41,7 @@ def judge_noncompete(cleaned_text: str) -> list[dict[str, Any]]:
             "source": "rules",
             "risk_type": "noncompete_no_pay",
             "severity": "high",
-            "excerpt": _longest_clause(cleaned_text),
+            "excerpt": clause,
             "explanation": _EXPLANATION,
         }
     ]
