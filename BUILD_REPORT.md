@@ -29,7 +29,7 @@ data/
             └── cleaned.txt                        # 清洗产物
 ```
 
-接口：`POST /contracts`、`GET /contracts/{id}`、`GET /contracts?limit=&offset=`、`POST /contracts/{id}/parse`（202，后台执行）、`GET /contracts/{id}/parsed`、`GET /contracts/{id}/cleaned`。
+接口：`POST /contracts`、`POST /contracts/batch`、`GET /contracts/{id}`、`GET /contracts?limit=&offset=`、`POST /contracts/{id}/parse`（202，后台执行）、`GET /contracts/{id}/parsed`、`GET /contracts/{id}/cleaned`。
 测试：`.venv/Scripts/python.exe -m pytest -q` → **30 passed**。
 
 ## 依赖与模型（M3）
@@ -116,6 +116,15 @@ data/
 - **测试**：新增 `tests/test_delete_contract.py`（4 条）与 `tests/test_concurrency.py`（3 条），总计 **39 passed**；未创建/引用 `test.txt`。
 - **受保护记录**：`test.txt`（contract_id `497a8067…`）与其 64 位 sha 目录全程只读，未被迁移或清理逻辑触碰。
 
+## M3.8 批量上传与自动解析
+
+- **`POST /contracts/batch`**：multipart 重复字段 `files`，返回 **200**（整批有成有败，201 只承诺新建成功）。body：`items[]`（filename/contract_id/status/detail）+ `summary`（total/succeeded/failed）。
+- **逐文件复用**：直接调用 `ContractManager.upload()`，不复制校验/入库逻辑；每项失败按领域错误转成独立状态码：`ValidationError→422`、`DuplicateContractError→409`（带已有 contract_id）、`CorruptedFileError→400`（与单文件上传一致），成功 `201`。
+- **上限**：文件数 ≤ `MAX_BATCH_FILES`（默认 20，读取前检查）、总大小 ≤ `MAX_BATCH_BYTES`（默认 200MB，边读边累计，超限即停），超限整批 422；两个上限均可用环境变量覆盖。
+- **自动解析**：201 项在响应前调用 `start_parse()` 原子抢占并 `BackgroundTasks` 排队，detail 标注 `uploaded, parse scheduled`；解析结果通过 `GET /contracts/{id}` 轮询，不进入上传响应。
+- **并发**：复用主键去重与原子抢占，不新增并发控制；新增批量 vs 单文件混合竞态测试。
+- 新增 `tests/test_batch_upload.py`（4 条），全量 **43 passed**。
+
 ## 分层
 
 - `domain/`：`ports.py`（`ContractRepository`、`DocumentParser`、`StoredArtifacts`）、`validation.py`、`cleaning.py`（纯函数清洗器）；不 import api/app/infra
@@ -199,6 +208,7 @@ M3 新发现问题：
 15. **删除中途崩溃**：事务回滚会保留账行，但磁盘可能已被部分删除，之后 `GET` 会因原文缺失告警；跨资源删除无法完全原子，属已知取舍。
 16. **并发双 parse 的 409 窗口**：仅当第一条仍处于 `parsing` 时第二条才 409；若第一条极快完成，第二条会按“可重解析”返回 202（这是保留重解析能力的既有语义，非竞态）。
 17. **DELETE 镜像风险**：DELETE 采用「先删磁盘目录、后删账本行」顺序。若 `rmtree` 成功但随后 SQLite 事务提交失败（本地单机场景概率极低），会出现账上有记录但磁盘目录已删除的账实不符：`GET` 返回该记录，但 `parsed_path` / `files` 路径指向不存在的目录。处置：登记为已知问题，不返工；若未来需要修复，方案为删除后启动时对账（扫描账本行校验目录存在性，缺失则标记 `failed` 或清理账行）。
+18. **BackgroundTask 非持久化在批量自动解析下暴露概率上升**：`POST /contracts/batch` 会为每个成功项自动排解析任务，任务只存在于进程内存；服务重启时 pending 任务丢失，账本残留 `parsing` 状态（启动回收会改为 `failed`）。单文件时代概率低，批量时代更常见。处置：登记不返工；修复方向为 Celery + Redis 等持久队列。
 
 ## 验收记录
 
@@ -251,3 +261,11 @@ M3 新发现问题：
 - 并发：仓库层双写同 sha 恰一个成功、一个 `DuplicateContractError`（含成功方 contract_id）；API 双 POST → 201+409；API 双 parse（慢解析器占住 parsing）→ 202+409。
 - 受保护 `test.txt` 记录与其目录只读核对，状态仍为 `parsed`、目录存在。
 - 全量 `pytest`：**39 passed**。
+
+## M3.8 验收记录
+
+- 批量逐项状态：`new.txt→201（parse scheduled）`、`bad.exe→422`、`dup.txt→409（带已有 id）`、`broken.pdf→400`；summary total=4/succeeded=1/failed=3。
+- 自动解析：201 项轮询后 `status=parsed`。
+- 上限：21 个文件 → 422；缩小 `MAX_BATCH_BYTES` 后超总大小 → 422。
+- 并发：批量与单文件同时上传同一内容，恰一方 201、另一方 409，失败方 detail 含成功方 contract_id。
+- 全量 `pytest`：**43 passed**。
