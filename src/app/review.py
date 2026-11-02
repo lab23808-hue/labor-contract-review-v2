@@ -3,6 +3,7 @@ from typing import Any, Optional, Protocol
 
 from domain.merge.merger import merge_review
 from domain.prompt_builder import build_prompt
+from domain.rules.noncompete import judge_noncompete
 from domain.rules.penalty import judge_penalty
 from domain.rules.probation import judge_probation
 from domain.rules.social_security import judge_social_security
@@ -47,6 +48,7 @@ def run_full_review(
         if risk is not None
     ]
     rules_risks.extend(judge_penalty(cleaned_text))
+    rules_risks.extend(judge_noncompete(cleaned_text))
     llm_output = run_llm_branch(cleaned_text, extract_json, llm_client)
     return merge_review(rules_risks, llm_output)
 
