@@ -127,3 +127,43 @@ def test_trace_mode_writes_all_artifacts_and_matches_plain_report(
     actions = {item["action"] for item in merger["arbitration"]}
     assert "keep_rule" in actions
     assert "keep_llm" in actions
+
+
+def test_trace_counts_only_dropped_events_as_arbitration(
+    tmp_path, monkeypatch, capsys
+):
+    response = {
+        "risks": [
+            {
+                "risk_type": "illegal_penalty",
+                "severity": "high",
+                "excerpt": (
+                    "乙方在合同期内提前离职的，"
+                    "应向甲方支付违约金人民币20000元"
+                ),
+                "explanation": "LLM 版",
+                "is_violation": True,
+            }
+        ],
+        "other_observations": [],
+    }
+    monkeypatch.setattr(
+        "app.review._default_client", lambda: FakeLLM(response)
+    )
+    monkeypatch.chdir(tmp_path)
+    fixture = (FIXTURES / "C-003.txt").resolve()
+
+    assert main(["review", str(fixture), "--trace"]) == 0
+    capsys.readouterr()
+
+    trace_dir = sorted(tmp_path.glob("trace_*"))[0]
+    log = (trace_dir / "trace.log").read_text(encoding="utf-8")
+    assert "arbitration_events=1" in log
+    assert "total_events=3" in log
+
+    merger = json.loads(
+        (trace_dir / "07_merger.json").read_text(encoding="utf-8")
+    )
+    actions = [item["action"] for item in merger["arbitration"]]
+    assert actions.count("keep_rule") == 2
+    assert actions.count("drop_llm_rule_hit") == 1

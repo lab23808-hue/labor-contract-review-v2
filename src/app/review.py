@@ -108,11 +108,18 @@ def run_full_review(
             {"report": report, "arbitration": arbitration},
         )
         recorder.write_json("08_final_report.json", report)
+        arbitration_events = sum(
+            1
+            for event in arbitration
+            if event["action"].startswith("drop_")
+        )
         recorder.log(
-            "merger risks=%d sources=%s arbitration_events=%d"
+            "merger risks=%d sources=%s arbitration_events=%d "
+            "total_events=%d"
             % (
                 report["meta"]["risk_count"],
                 report["meta"]["sources"],
+                arbitration_events,
                 len(arbitration),
             )
         )

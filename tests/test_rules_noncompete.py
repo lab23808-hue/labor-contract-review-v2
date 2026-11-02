@@ -54,3 +54,48 @@ def test_title_keyword_suppresses_report_current_behavior():
     text = "劳动合同\n竞业限制补偿：乙方放弃补偿，甲方无需支付。\n"
 
     assert judge_noncompete(text) == []
+
+
+def test_negated_compensation_reports():
+    text = "劳动合同\n双方约定竞业限制，无经济补偿。\n"
+
+    risks = judge_noncompete(text)
+
+    assert len(risks) == 1
+    assert risks[0]["risk_type"] == "noncompete_no_pay"
+
+
+def test_no_need_to_pay_compensation_reports():
+    text = (
+        "劳动合同\n"
+        "双方约定竞业限制，竞业限制期间甲方无需支付经济补偿。\n"
+    )
+
+    risks = judge_noncompete(text)
+
+    assert len(risks) == 1
+    assert risks[0]["risk_type"] == "noncompete_no_pay"
+
+
+def test_monthly_compensation_is_positive():
+    text = (
+        "劳动合同\n"
+        "双方约定竞业限制，竞业限制期间甲方按月支付经济补偿。\n"
+    )
+
+    assert judge_noncompete(text) == []
+
+
+def test_positive_mention_after_negative_keeps_compensation():
+    text = (
+        "劳动合同\n"
+        "双方约定竞业限制，无经济补偿。甲方按月支付经济补偿。\n"
+    )
+
+    assert judge_noncompete(text) == []
+
+
+def test_distant_negation_does_not_suppress():
+    text = "劳动合同\n双方约定竞业限制，无任何形式的额外经济补偿。\n"
+
+    assert judge_noncompete(text) == []
