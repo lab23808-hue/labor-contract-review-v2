@@ -10,7 +10,7 @@
       "risk_type": "term_inconsistent",
       "severity": "medium",
       "excerpt": "合同期限自2025年02月14日起至2028年02月14日止。",
-      "explanation": "该日期区间推算为36个月，与已知的24个月合同期限及第2条“劳动合同期限为两年”矛盾。"
+      "explanation": "该日期区间推算为36个月，与已知的24个月合同期限及第2条“劳动合同期限为两年”的表述矛盾。"
     }
   ],
   "other_observations": [
