@@ -14,7 +14,7 @@
 
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,9 @@ _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
 def merge_review(
-    rules_risks: list[dict[str, Any]], llm_output: dict[str, Any]
+    rules_risks: list[dict[str, Any]],
+    llm_output: dict[str, Any],
+    trace_out: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     llm_failed = bool(llm_output.get("llm_failed"))
 
@@ -33,10 +35,25 @@ def merge_review(
         risk_type = risk.get("risk_type")
         if not risk_type:
             logger.warning("丢弃缺少 risk_type 的 LLM 风险：%r", risk)
+            if trace_out is not None:
+                trace_out.append(
+                    {"action": "drop_llm_missing_type", "entry": risk}
+                )
             continue
         llm_by_type.setdefault(risk_type, []).append(risk)
 
-    final_risks = [_with_source(risk, "rules") for risk in rules_risks]
+    final_risks = []
+    for risk in rules_risks:
+        final_risks.append(_with_source(risk, "rules"))
+        if trace_out is not None:
+            trace_out.append(
+                {
+                    "action": "keep_rule",
+                    "risk_type": risk["risk_type"],
+                    "entry": risk,
+                }
+            )
+
     for risk_type, llm_risks in llm_by_type.items():
         if risk_type in rule_types:
             for risk in llm_risks:
@@ -44,10 +61,25 @@ def merge_review(
                     "同 risk_type 双源命中，丢弃 LLM 版：%s",
                     json.dumps(risk, ensure_ascii=False),
                 )
+                if trace_out is not None:
+                    trace_out.append(
+                        {
+                            "action": "drop_llm_rule_hit",
+                            "risk_type": risk_type,
+                            "entry": risk,
+                        }
+                    )
             continue
-        final_risks.extend(
-            _with_source(risk, "llm") for risk in llm_risks
-        )
+        for risk in llm_risks:
+            final_risks.append(_with_source(risk, "llm"))
+            if trace_out is not None:
+                trace_out.append(
+                    {
+                        "action": "keep_llm",
+                        "risk_type": risk_type,
+                        "entry": risk,
+                    }
+                )
 
     if llm_failed:
         logger.warning("LLM 分支失败，报告仅保留规则结果")
