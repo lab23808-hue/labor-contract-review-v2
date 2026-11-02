@@ -172,6 +172,32 @@ def test_chinese_numerals_are_converted():
     assert result["probation_months"]["evidence"] == "试用期为十二个月"
 
 
+@pytest.mark.parametrize(
+    ("start", "end", "expected_months"),
+    [
+        ("2025年3月1日", "2028年2月29日", 36),
+        ("2025年4月1日", "2026年3月31日", 12),
+        ("2025年7月1日", "2027年6月30日", 24),
+        ("2025年5月20日", "2028年5月19日", 36),
+        ("2025年1月10日", "2025年1月10日", 0),
+        ("2025年1月15日", "2025年2月10日", 0),
+    ],
+)
+def test_inferred_term_uses_adjusted_end_date(
+    start, end, expected_months
+):
+    text = f"劳动合同\n本合同期限自{start}起至{end}止。\n"
+
+    term = extract_fields(text)["contract_term"]
+
+    assert term == {
+        "value": expected_months,
+        "method": "inferred",
+        "evidence": f"自{start}起至{end}止",
+        "conflict": None,
+    }
+
+
 def test_mixed_case_amount_prefers_arabic():
     text = "劳动合同\n月工资为人民币8000元（大写：捌仟元整）。\n"
 

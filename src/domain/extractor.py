@@ -1,4 +1,5 @@
 import re
+from datetime import date, timedelta
 from typing import Any, Callable, Optional
 
 _CN_DIGITS = {
@@ -171,9 +172,22 @@ def _inferred_term_dates(text: str, normalized: str) -> Optional[dict[str, Any]]
     match = _TERM_DATE_RANGE.search(normalized)
     if match is None:
         return None
-    start_year, start_month = int(match.group(1)), int(match.group(2))
-    end_year, end_month = int(match.group(4)), int(match.group(5))
-    months = (end_year - start_year) * 12 + (end_month - start_month)
+    start_year, start_month, start_day = (
+        int(match.group(1)),
+        int(match.group(2)),
+        int(match.group(3)),
+    )
+    end_year, end_month, end_day = (
+        int(match.group(4)),
+        int(match.group(5)),
+        int(match.group(6)),
+    )
+    adjusted_end = date(end_year, end_month, end_day) + timedelta(days=1)
+    months = (adjusted_end.year - start_year) * 12 + (
+        adjusted_end.month - start_month
+    )
+    if adjusted_end.day < start_day:
+        months -= 1
     return _hit(text, match, months, "inferred")
 
 
