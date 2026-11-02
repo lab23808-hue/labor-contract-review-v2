@@ -1,5 +1,7 @@
 import logging
 
+import pytest
+
 from domain.verifier import verify_llm_output
 
 CLEANED = "劳动合同\n第一条 试用期三个月。\n第二条 月工资为人民币8000元。"
@@ -25,7 +27,7 @@ def test_keeps_exact_excerpt():
 
 
 def test_drops_tampered_excerpt_and_logs(caplog):
-    tampered = "试用期三个 月"
+    tampered = "试用期二个月"
     output = {
         "risks": [
             {
@@ -49,3 +51,46 @@ def test_drops_tampered_excerpt_and_logs(caplog):
     assert "丢弃 LLM risk" in caplog.text
     assert tampered in caplog.text
     assert "丢弃 LLM observation" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "excerpt", ["试用期间月工资为3200元", "试用期间月工资为　3200元"]
+)
+def test_keeps_excerpt_when_only_whitespace_differs(excerpt):
+    cleaned = "劳动合同\n乙方月工资为6000元，试用期间月工资为\n3200元。"
+    output = {
+        "risks": [
+            {
+                "risk_type": "wage_below_floor",
+                "severity": "medium",
+                "excerpt": excerpt,
+                "explanation": "低于 80%",
+            }
+        ],
+        "other_observations": [],
+    }
+
+    result = verify_llm_output(output, cleaned)
+
+    assert result["risks"] == output["risks"]
+
+
+@pytest.mark.parametrize("tampered", ["试用期个月", "试用期三个月整"])
+def test_drops_excerpt_with_deleted_or_extra_chars(tampered, caplog):
+    output = {
+        "risks": [
+            {
+                "risk_type": "probation_exceed",
+                "severity": "high",
+                "excerpt": tampered,
+                "explanation": "编造",
+            }
+        ],
+        "other_observations": [],
+    }
+
+    with caplog.at_level(logging.WARNING):
+        result = verify_llm_output(output, CLEANED)
+
+    assert result["risks"] == []
+    assert tampered in caplog.text
