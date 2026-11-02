@@ -143,3 +143,69 @@ def test_meta_counts():
         "risk_count": 3,
         "sources": {"rules": 2, "llm": 1},
     }
+
+
+def test_llm_entries_of_same_type_are_all_kept():
+    llm_risks = [
+        {
+            "risk_type": "disguised_waiver",
+            "severity": "high",
+            "excerpt": "第4条",
+            "explanation": "放弃社保",
+        },
+        {
+            "risk_type": "disguised_waiver",
+            "severity": "high",
+            "excerpt": "第5条",
+            "explanation": "伤亡免责",
+        },
+        {
+            "risk_type": "disguised_waiver",
+            "severity": "high",
+            "excerpt": "第6条",
+            "explanation": "自愿加班",
+        },
+    ]
+
+    report = merge_review(
+        [], {"risks": llm_risks, "other_observations": []}
+    )
+
+    assert [risk["excerpt"] for risk in report["risks"]] == [
+        "第4条",
+        "第5条",
+        "第6条",
+    ]
+    assert [risk["source"] for risk in report["risks"]] == ["llm"] * 3
+    assert report["meta"] == {
+        "llm_failed": False,
+        "risk_count": 3,
+        "sources": {"rules": 0, "llm": 3},
+    }
+
+
+def test_rule_wins_discards_every_llm_entry_of_that_type(caplog):
+    llm_risks = [
+        {
+            "risk_type": "probation_exceed",
+            "severity": "medium",
+            "excerpt": "第一条",
+            "explanation": "LLM 版一",
+        },
+        {
+            "risk_type": "probation_exceed",
+            "severity": "low",
+            "excerpt": "第二条",
+            "explanation": "LLM 版二",
+        },
+    ]
+
+    with caplog.at_level(logging.WARNING):
+        report = merge_review(
+            [_rule("probation_exceed", "high")],
+            {"risks": llm_risks, "other_observations": []},
+        )
+
+    assert len(report["risks"]) == 1
+    assert report["risks"][0]["source"] == "rules"
+    assert caplog.text.count("同 risk_type 双源命中") == 2

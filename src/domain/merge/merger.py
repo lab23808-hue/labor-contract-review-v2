@@ -1,9 +1,11 @@
 """规则结果与 LLM 结果的确定性合流。
 
 仲裁规则：
-1. 同 risk_type 双源命中 → 规则版胜出，LLM 版丢弃并记录日志；
-2. 规则单源 → 保留；
-3. LLM 单源 → 保留并标记 source=llm；
+1. 按 risk_type 分组：规则命中该 type → 规则版胜出，该 type 的全部 LLM 版
+   逐条丢弃并记录日志；
+2. 规则沉默该 type → 该 type 的 LLM 条目全部保留并标记 source=llm，
+   条目之间不互相折叠；
+3. 规则单源 → 保留；
 4. severity 随被保留的一方，不做二次仲裁；
 5. llm_failed → 规则结果照常落报告，meta 标记；
 6. other_observations 原样透传（source=llm），不参与 risks 去重；
@@ -24,34 +26,36 @@ def merge_review(
 ) -> dict[str, Any]:
     llm_failed = bool(llm_output.get("llm_failed"))
 
-    merged: dict[str, dict[str, Any]] = {}
+    rules_by_type: dict[str, dict[str, Any]] = {}
     for risk in rules_risks:
-        merged[risk["risk_type"]] = _with_source(risk, "rules")
+        rules_by_type[risk["risk_type"]] = _with_source(risk, "rules")
 
+    llm_by_type: dict[str, list[dict[str, Any]]] = {}
     for risk in llm_output.get("risks") or []:
         risk_type = risk.get("risk_type")
         if not risk_type:
             logger.warning("丢弃缺少 risk_type 的 LLM 风险：%r", risk)
             continue
-        if risk_type in merged:
-            if merged[risk_type]["source"] == "rules":
+        llm_by_type.setdefault(risk_type, []).append(risk)
+
+    final_risks = list(rules_by_type.values())
+    for risk_type, llm_risks in llm_by_type.items():
+        if risk_type in rules_by_type:
+            for risk in llm_risks:
                 logger.warning(
                     "同 risk_type 双源命中，丢弃 LLM 版：%s",
                     json.dumps(risk, ensure_ascii=False),
                 )
-            else:
-                logger.warning(
-                    "重复的 LLM 风险，丢弃后者：%s",
-                    json.dumps(risk, ensure_ascii=False),
-                )
             continue
-        merged[risk_type] = _with_source(risk, "llm")
+        final_risks.extend(
+            _with_source(risk, "llm") for risk in llm_risks
+        )
 
     if llm_failed:
         logger.warning("LLM 分支失败，报告仅保留规则结果")
 
     final_risks = sorted(
-        merged.values(),
+        final_risks,
         key=lambda risk: (
             _SEVERITY_ORDER.get(risk.get("severity"), 3),
             risk.get("risk_type", ""),
