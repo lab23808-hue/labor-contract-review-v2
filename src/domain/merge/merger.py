@@ -1,11 +1,11 @@
 """规则结果与 LLM 结果的确定性合流。
 
 仲裁规则：
-1. 按 risk_type 分组：规则命中该 type → 规则版胜出，该 type 的全部 LLM 版
-   逐条丢弃并记录日志；
+1. 按 risk_type 分组：规则命中该 type → 该 type 的全部规则版保留（多条不
+   折叠），该 type 的全部 LLM 版逐条丢弃并记录日志；
 2. 规则沉默该 type → 该 type 的 LLM 条目全部保留并标记 source=llm，
    条目之间不互相折叠；
-3. 规则单源 → 保留；
+3. 规则单源 → 全部保留；
 4. severity 随被保留的一方，不做二次仲裁；
 5. llm_failed → 规则结果照常落报告，meta 标记；
 6. other_observations 原样透传（source=llm），不参与 risks 去重；
@@ -26,9 +26,7 @@ def merge_review(
 ) -> dict[str, Any]:
     llm_failed = bool(llm_output.get("llm_failed"))
 
-    rules_by_type: dict[str, dict[str, Any]] = {}
-    for risk in rules_risks:
-        rules_by_type[risk["risk_type"]] = _with_source(risk, "rules")
+    rule_types = {risk["risk_type"] for risk in rules_risks}
 
     llm_by_type: dict[str, list[dict[str, Any]]] = {}
     for risk in llm_output.get("risks") or []:
@@ -38,9 +36,9 @@ def merge_review(
             continue
         llm_by_type.setdefault(risk_type, []).append(risk)
 
-    final_risks = list(rules_by_type.values())
+    final_risks = [_with_source(risk, "rules") for risk in rules_risks]
     for risk_type, llm_risks in llm_by_type.items():
-        if risk_type in rules_by_type:
+        if risk_type in rule_types:
             for risk in llm_risks:
                 logger.warning(
                     "同 risk_type 双源命中，丢弃 LLM 版：%s",

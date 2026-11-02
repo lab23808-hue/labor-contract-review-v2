@@ -5,6 +5,9 @@ from domain.extractor import extract_fields
 from infra.llm_client import FakeLLM
 
 FIXTURE = Path(__file__).parent / "fixtures" / "contracts" / "synthetic_0001.txt"
+PENALTY_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "realistic" / "C-003.txt"
+)
 
 
 def _inputs() -> tuple[str, dict]:
@@ -75,6 +78,34 @@ def test_full_review_llm_failed_keeps_rules():
     assert [risk["source"] for risk in report["risks"]] == ["rules", "rules"]
     assert report["meta"] == {
         "llm_failed": True,
+        "risk_count": 2,
+        "sources": {"rules": 2, "llm": 0},
+    }
+
+
+def test_c003_penalty_rule_reports_two_rule_risks():
+    text = PENALTY_FIXTURE.read_text(encoding="utf-8")
+
+    report = run_full_review(
+        text,
+        extract_fields(text),
+        FakeLLM({"risks": [], "other_observations": []}),
+    )
+
+    penalties = [
+        risk
+        for risk in report["risks"]
+        if risk["risk_type"] == "illegal_penalty"
+    ]
+
+    assert len(penalties) == 2
+    assert [risk["source"] for risk in penalties] == ["rules", "rules"]
+    assert [risk["excerpt"] for risk in penalties] == [
+        "乙方在合同期内提前离职的，应向甲方支付违约金人民币20000元",
+        "乙方离职后未提前三十日书面通知甲方的，另行支付违约金5000元",
+    ]
+    assert report["meta"] == {
+        "llm_failed": False,
         "risk_count": 2,
         "sources": {"rules": 2, "llm": 0},
     }

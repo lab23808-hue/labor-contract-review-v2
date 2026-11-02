@@ -209,3 +209,48 @@ def test_rule_wins_discards_every_llm_entry_of_that_type(caplog):
     assert len(report["risks"]) == 1
     assert report["risks"][0]["source"] == "rules"
     assert caplog.text.count("同 risk_type 双源命中") == 2
+
+
+def test_multiple_rule_entries_of_same_type_are_all_kept(caplog):
+    rules = [
+        {
+            "source": "rules",
+            "risk_type": "illegal_penalty",
+            "severity": "medium",
+            "excerpt": "第一条违约金",
+            "explanation": "规则版一",
+        },
+        {
+            "source": "rules",
+            "risk_type": "illegal_penalty",
+            "severity": "medium",
+            "excerpt": "第二条违约金",
+            "explanation": "规则版二",
+        },
+    ]
+    llm_risks = [
+        {
+            "risk_type": "illegal_penalty",
+            "severity": "high",
+            "excerpt": "LLM 版",
+            "explanation": "LLM 版",
+            "is_violation": True,
+        }
+    ]
+
+    with caplog.at_level(logging.WARNING):
+        report = merge_review(
+            rules, {"risks": llm_risks, "other_observations": []}
+        )
+
+    assert [risk["excerpt"] for risk in report["risks"]] == [
+        "第一条违约金",
+        "第二条违约金",
+    ]
+    assert [risk["source"] for risk in report["risks"]] == ["rules", "rules"]
+    assert report["meta"] == {
+        "llm_failed": False,
+        "risk_count": 2,
+        "sources": {"rules": 2, "llm": 0},
+    }
+    assert caplog.text.count("同 risk_type 双源命中") == 1
