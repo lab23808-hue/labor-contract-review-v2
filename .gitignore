@@ -1,5 +1,6 @@
 .venv/
 .idea/
+.env
 data/
 blobs/
 .mineru-service.lock

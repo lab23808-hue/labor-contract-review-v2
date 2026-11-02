@@ -13,6 +13,8 @@ dependencies = [
     "python-docx",
     "mineru",
     "pypdf",
+    "openai",
+    "python-dotenv",
 ]
 
 [tool.pytest.ini_options]
