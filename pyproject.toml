@@ -20,3 +20,5 @@ dependencies = [
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["slow: calls the real DeepSeek API"]
+addopts = "-m 'not slow'"
