@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  {% if refresh_seconds %}
+  <meta http-equiv="refresh" content="{{ refresh_seconds }}">
+  {% endif %}
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }}</title>
+  <style>
+    body {
+      font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+      margin: 0 auto;
+      max-width: 980px;
+      padding: 2rem;
+      line-height: 1.65;
+      color: #1f2933;
+      background: #ffffff;
+    }
+    h1, h2, h3 { line-height: 1.3; }
+    .page-header {
+      border-bottom: 2px solid #e5e7eb;
+      padding-bottom: 0.75rem;
+    }
+    .page-header h1 { margin: 0 0 0.4rem; }
+    .meta { margin: 0; color: #667085; font-size: 0.9rem; }
+    .meta code { font-size: 0.85rem; }
+    .summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin: 1.5rem 0;
+      padding: 1rem 1.25rem;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+    }
+    .summary-item {
+      display: flex;
+      flex-direction: column;
+      min-width: 150px;
+    }
+    .label {
+      font-size: 0.78rem;
+      color: #667085;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .badge-high { background: #fde8e8; color: #9b1c1c; }
+    .badge-medium { background: #fef3c7; color: #92400e; }
+    .badge-low { background: #e0f2fe; color: #075985; }
+    .badge-none { background: #e8f5e9; color: #1b5e20; }
+    .card {
+      border: 1px solid #e5e7eb;
+      border-left: 6px solid #9ca3af;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin: 1rem 0;
+      background: #ffffff;
+    }
+    .card-high { border-left-color: #c81e1e; }
+    .card-medium { border-left-color: #d97706; }
+    .card-low { border-left-color: #0284c7; }
+    .card-head {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+    }
+    .card-head h3 { margin: 0; font-size: 1.1rem; }
+    .source-tag {
+      font-size: 0.8rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 4px;
+    }
+    .source-rules { background: #eef2ff; color: #3730a3; }
+    .source-llm { background: #f5f3ff; color: #6d28d9; }
+    .section-label {
+      margin-top: 0.9rem;
+      font-size: 0.8rem;
+      color: #667085;
+      font-weight: 600;
+    }
+    .excerpt {
+      margin: 0.35rem 0 0;
+      padding: 0.75rem 1rem;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.92rem;
+    }
+    .explanation { margin: 0.35rem 0 0; }
+    .empty {
+      border: 1px dashed #86efac;
+      background: #f0fdf4;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+    }
+    .checklist { margin: 0.75rem 0 0; padding-left: 1.25rem; }
+    .observations { margin-top: 2rem; }
+    .observation {
+      border-left: 4px solid #cbd5e1;
+      padding: 0.5rem 1rem;
+      margin: 0.75rem 0;
+      background: #f8fafc;
+    }
+    .status, .error {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 1.25rem;
+      margin-top: 1.5rem;
+      background: #f8fafc;
+    }
+    .error { border-color: #fecaca; background: #fef2f2; }
+    .error-detail {
+      white-space: pre-wrap;
+      background: #ffffff;
+      border: 1px solid #fecaca;
+      padding: 0.75rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    .muted { color: #667085; font-size: 0.9rem; }
+    footer {
+      margin-top: 2.5rem;
+      border-top: 1px solid #e5e7eb;
+      padding-top: 1rem;
+      color: #667085;
+      font-size: 0.85rem;
+    }
+    @media print {
+      body { margin: 0; padding: 0; max-width: none; }
+      .card, .empty, .observation, .summary { break-inside: avoid; }
+      .no-print { display: none; }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <header class="page-header">
+    <h1>{{ title }}</h1>
+    {% if task_id %}
+    <p class="meta">
+      任务 ID：<code>{{ task_id }}</code>
+      {% if filename %} · 文件：{{ filename }}{% endif %}
+    </p>
+    {% endif %}
+  </header>
+
+  {% if mode == "report" %}
+  <section class="summary">
+    <div class="summary-item">
+      <span class="label">整体结论</span>
+      <span class="badge badge-{{ overall_class }}">{{ overall }}</span>
+    </div>
+    <div class="summary-item">
+      <span class="label">风险条数</span>
+      <strong>{{ risk_count }}</strong>
+    </div>
+    <div class="summary-item">
+      <span class="label">审查时间</span>
+      <span>{{ review_time }}</span>
+    </div>
+    <div class="summary-item">
+      <span class="label">tokens</span>
+      <span>
+        {{ tokens.total_tokens }}
+        （prompt {{ tokens.prompt_tokens }} / completion {{ tokens.completion_tokens }}）
+      </span>
+    </div>
+  </section>
+
+  {% if risk_count > 0 %}
+  <section class="risks">
+    <h2>风险条款</h2>
+    {% for risk in risks %}
+    <article class="card card-{{ risk.severity_class }}">
+      <div class="card-head">
+        <h3>{{ risk.type_name }}</h3>
+        <span class="badge badge-{{ risk.severity_class }}">{{ risk.severity_label }}</span>
+        <span class="source-tag source-{{ risk.source_class }}">{{ risk.source_label }}</span>
+      </div>
+      <div class="section-label">原文摘录</div>
+      <blockquote class="excerpt">{{ risk.excerpt or "（未提供原文摘录）" }}</blockquote>
+      <div class="section-label">判定说明</div>
+      <p class="explanation">{{ risk.explanation or "（无补充说明）" }}</p>
+    </article>
+    {% endfor %}
+  </section>
+  {% else %}
+  <section class="empty">
+    <h2>未检出风险条款</h2>
+    <p>
+      本次审查未发现以下检查项对应的问题。下面是本次覆盖的检查项，
+      供核对审查范围——「没查出」不等于「没查」。
+    </p>
+    <ul class="checklist">
+      {% for check in checks %}
+      <li>{{ check }}</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endif %}
+
+  {% if observations %}
+  <section class="observations">
+    <h2>其他观察（不计入风险）</h2>
+    {% for item in observations %}
+    <div class="observation">
+      <blockquote class="excerpt">{{ item.excerpt }}</blockquote>
+      <p>{{ item.note }}</p>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  {% elif mode == "status" %}
+  <section class="status">
+    <h2>{{ status_label }}</h2>
+    <p>{{ message }}</p>
+    {% if refresh_seconds %}
+    <p class="muted">页面将在 {{ refresh_seconds }} 秒后自动刷新。</p>
+    {% endif %}
+  </section>
+
+  {% else %}
+  <section class="error">
+    <h2>{{ status_label or title }}</h2>
+    <p>{{ message }}</p>
+    {% if error %}
+    <pre class="error-detail">{{ error }}</pre>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <footer>
+    <p>{{ disclaimer }}</p>
+  </footer>
+</body>
+</html>

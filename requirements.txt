@@ -10,3 +10,4 @@ pypdf
 openai
 python-dotenv
 psutil
+jinja2
