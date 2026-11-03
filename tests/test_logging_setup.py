@@ -104,7 +104,10 @@ def test_llm_client_logs_timing_and_retry(monkeypatch, caplog):
             base_url="http://localhost",
             model="fake",
             thinking="disabled",
-        )
+        ),
+        backoff_base=0,
+        jitter=0,
+        client=object(),
     )
 
     def fail(prompt):

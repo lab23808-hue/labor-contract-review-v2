@@ -18,6 +18,22 @@ WAGE_FIXTURE = (
     Path(__file__).parent / "corpus_gen" / "generated" / "G-15.txt"
 )
 
+ZERO_TOKENS = {
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "estimated": False,
+}
+
+
+def _meta(llm_failed, risk_count, sources):
+    return {
+        "llm_failed": llm_failed,
+        "risk_count": risk_count,
+        "sources": sources,
+        "tokens": ZERO_TOKENS,
+    }
+
 
 def _inputs() -> tuple[str, dict]:
     text = FIXTURE.read_text(encoding="utf-8")
@@ -55,11 +71,9 @@ def test_full_review_rules_win_on_synthetic_0001():
         "term_inconsistent",
     ]
     assert [risk["source"] for risk in report["risks"]] == ["rules", "rules"]
-    assert report["meta"] == {
-        "llm_failed": False,
-        "risk_count": 2,
-        "sources": {"rules": 2, "llm": 0},
-    }
+    assert report["meta"] == _meta(
+        False, 2, {"rules": 2, "llm": 0}
+    )
     assert report["other_observations"] == [
         {
             "excerpt": "第2条 试用期期限超过上限",
@@ -85,11 +99,9 @@ def test_full_review_llm_failed_keeps_rules():
         "term_inconsistent",
     ]
     assert [risk["source"] for risk in report["risks"]] == ["rules", "rules"]
-    assert report["meta"] == {
-        "llm_failed": True,
-        "risk_count": 2,
-        "sources": {"rules": 2, "llm": 0},
-    }
+    assert report["meta"] == _meta(
+        True, 2, {"rules": 2, "llm": 0}
+    )
 
 
 def test_c003_penalty_rule_reports_two_rule_risks():
@@ -113,11 +125,9 @@ def test_c003_penalty_rule_reports_two_rule_risks():
         "乙方在合同期内提前离职的，应向甲方支付违约金人民币20000元",
         "乙方离职后未提前三十日书面通知甲方的，另行支付违约金5000元",
     ]
-    assert report["meta"] == {
-        "llm_failed": False,
-        "risk_count": 2,
-        "sources": {"rules": 2, "llm": 0},
-    }
+    assert report["meta"] == _meta(
+        False, 2, {"rules": 2, "llm": 0}
+    )
 
 
 def test_c007_open_ended_denied_llm_risk_is_kept():
@@ -146,11 +156,9 @@ def test_c007_open_ended_denied_llm_risk_is_kept():
         "open_ended_denied"
     ]
     assert report["risks"][0]["source"] == "llm"
-    assert report["meta"] == {
-        "llm_failed": False,
-        "risk_count": 1,
-        "sources": {"rules": 0, "llm": 1},
-    }
+    assert report["meta"] == _meta(
+        False, 1, {"rules": 0, "llm": 1}
+    )
 
 
 def test_c008_noncompete_rules_and_llm_are_merged():
@@ -181,11 +189,9 @@ def test_c008_noncompete_rules_and_llm_are_merged():
         "乙方离职后三年内不得入职与甲方有竞争关系的单位，"
         "竞业限制期间甲方无需支付任何补偿"
     )
-    assert report["meta"] == {
-        "llm_failed": False,
-        "risk_count": 2,
-        "sources": {"rules": 1, "llm": 1},
-    }
+    assert report["meta"] == _meta(
+        False, 2, {"rules": 1, "llm": 1}
+    )
 
 
 def test_wage_rule_wins_over_llm_dual_source():
@@ -214,8 +220,6 @@ def test_wage_rule_wins_over_llm_dual_source():
     ]
     assert len(wages) == 1
     assert wages[0]["source"] == "rules"
-    assert report["meta"] == {
-        "llm_failed": False,
-        "risk_count": 1,
-        "sources": {"rules": 1, "llm": 0},
-    }
+    assert report["meta"] == _meta(
+        False, 1, {"rules": 1, "llm": 0}
+    )

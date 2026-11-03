@@ -1,0 +1,167 @@
+{
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+    "cpu_count": 12,
+    "python": "3.13.12",
+    "rps": 8.0,
+    "max_inflight": 8,
+    "corpus_size": 16
+  },
+  "ladder": [
+    {
+      "workers": 1,
+      "chaos": false,
+      "run_id": "batch_20261103_140512_e9d304",
+      "total_elapsed": 22.916,
+      "wall_elapsed": 32.126,
+      "ok": 16,
+      "llm_failed": 0,
+      "failed": 0,
+      "gt_match": 16,
+      "p50": 1.256,
+      "p95": 1.715,
+      "max": 4.49,
+      "cpu_avg": 50.1,
+      "cpu_max": 74.1,
+      "tokens": {
+        "prompt_tokens": 15183,
+        "completion_tokens": 1749,
+        "total_tokens": 16932,
+        "estimated": false
+      }
+    },
+    {
+      "workers": 2,
+      "chaos": false,
+      "run_id": "batch_20261103_140544_a7e059",
+      "total_elapsed": 12.434,
+      "wall_elapsed": 20.689,
+      "ok": 16,
+      "llm_failed": 0,
+      "failed": 0,
+      "gt_match": 16,
+      "p50": 1.236,
+      "p95": 3.069,
+      "max": 3.569,
+      "cpu_avg": 46.8,
+      "cpu_max": 69.3,
+      "tokens": {
+        "prompt_tokens": 15183,
+        "completion_tokens": 1674,
+        "total_tokens": 16857,
+        "estimated": false
+      }
+    },
+    {
+      "workers": 4,
+      "chaos": false,
+      "run_id": "batch_20261103_140602_b9297c",
+      "total_elapsed": 6.934,
+      "wall_elapsed": 11.555,
+      "ok": 16,
+      "llm_failed": 0,
+      "failed": 0,
+      "gt_match": 16,
+      "p50": 1.449,
+      "p95": 2.283,
+      "max": 2.916,
+      "cpu_avg": 55.6,
+      "cpu_max": 79.4,
+      "tokens": {
+        "prompt_tokens": 15183,
+        "completion_tokens": 1781,
+        "total_tokens": 16964,
+        "estimated": false
+      }
+    },
+    {
+      "workers": 8,
+      "chaos": false,
+      "run_id": "batch_20261103_140616_10f36e",
+      "total_elapsed": 4.855,
+      "wall_elapsed": 13.183,
+      "ok": 16,
+      "llm_failed": 0,
+      "failed": 0,
+      "gt_match": 16,
+      "p50": 2.412,
+      "p95": 3.758,
+      "max": 3.79,
+      "cpu_avg": 54.8,
+      "cpu_max": 74.8,
+      "tokens": {
+        "prompt_tokens": 15183,
+        "completion_tokens": 1419,
+        "total_tokens": 16602,
+        "estimated": false
+      }
+    },
+    {
+      "workers": 16,
+      "chaos": false,
+      "run_id": "batch_20261103_140630_79ec0c",
+      "total_elapsed": 5.88,
+      "wall_elapsed": 13.661,
+      "ok": 16,
+      "llm_failed": 0,
+      "failed": 0,
+      "gt_match": 16,
+      "p50": 4.344,
+      "p95": 4.995,
+      "max": 5.839,
+      "cpu_avg": 52.6,
+      "cpu_max": 75.9,
+      "tokens": {
+        "prompt_tokens": 15183,
+        "completion_tokens": 1664,
+        "total_tokens": 16847,
+        "estimated": false
+      }
+    },
+    {
+      "workers": 32,
+      "chaos": false,
+      "run_id": "batch_20261103_140644_aa9ca5",
+      "total_elapsed": 5.259,
+      "wall_elapsed": 13.928,
+      "ok": 16,
+      "llm_failed": 0,
+      "failed": 0,
+      "gt_match": 16,
+      "p50": 4.592,
+      "p95": 5.165,
+      "max": 5.217,
+      "cpu_avg": 52.7,
+      "cpu_max": 72.2,
+      "tokens": {
+        "prompt_tokens": 15183,
+        "completion_tokens": 1576,
+        "total_tokens": 16759,
+        "estimated": false
+      }
+    }
+  ],
+  "chaos": {
+    "workers": 4,
+    "chaos": true,
+    "run_id": "batch_20261103_140659_f23948",
+    "total_elapsed": 10.295,
+    "wall_elapsed": 19.552,
+    "ok": 14,
+    "llm_failed": 2,
+    "failed": 0,
+    "gt_match": 16,
+    "p50": 2.381,
+    "p95": 4.002,
+    "max": 4.655,
+    "cpu_avg": 55.5,
+    "cpu_max": 72.2,
+    "tokens": {
+      "prompt_tokens": 13272,
+      "completion_tokens": 1410,
+      "total_tokens": 14682,
+      "estimated": false
+    }
+  }
+}

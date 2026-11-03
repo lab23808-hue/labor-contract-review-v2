@@ -139,10 +139,12 @@ def run_full_review(
     )
 
     arbitration = [] if recorder is not None else None
+    tokens = llm_output.get("_usage") or _zero_tokens()
     report = merge_review(rules_risks, llm_output, trace_out=arbitration)
 
     if run_id is not None:
         report["meta"]["run_id"] = run_id
+    report["meta"]["tokens"] = tokens
 
     logger.info(
         "",
@@ -185,6 +187,15 @@ def run_full_review(
 
 def _as_list(risk: Optional[dict[str, Any]]) -> list[dict[str, Any]]:
     return [] if risk is None else [risk]
+
+
+def _zero_tokens() -> dict[str, Any]:
+    return {
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "total_tokens": 0,
+        "estimated": False,
+    }
 
 
 def _default_client() -> LLMClient:

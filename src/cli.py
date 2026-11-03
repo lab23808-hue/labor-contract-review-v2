@@ -1,4 +1,4 @@
-"""Thin CLI: python -m src.cli review <file>."""
+"""CLI: python -m src.cli review <file> | batch <dir>."""
 
 import argparse
 import json
@@ -13,11 +13,14 @@ _SRC = Path(__file__).resolve().parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from app.batch import run_batch
 from app.review import run_full_review
 from app.trace import TraceRecorder
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields
 from infra.docx_parser import DocxParser
+from infra.llm_client import DeepSeekLLMClient
+from infra.rate_limiter import RequestThrottle
 from infra.txt_parser import TxtParser
 from logging_setup import setup_logging
 
@@ -41,6 +44,7 @@ def _read_parsed(path: Path) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m src.cli")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
     review = subparsers.add_parser("review", help="对合同文件执行完整审查")
     review.add_argument("file")
     review.add_argument(
@@ -48,11 +52,25 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="把各阶段中间产物写入 trace_<run_id>/",
     )
+
+    batch = subparsers.add_parser("batch", help="对目录内合同批量审查")
+    batch.add_argument("directory")
+    batch.add_argument("--workers", type=int, default=4)
+    batch.add_argument("--trace", action="store_true")
+    batch.add_argument("--chaos", action="store_true")
+    batch.add_argument("--chaos-rate", type=float, default=0.2)
+    batch.add_argument("--rps", type=float, default=8.0)
+    batch.add_argument("--max-inflight", type=int, default=8)
+
     args = parser.parse_args(argv)
+    if args.command == "review":
+        return _run_review(args)
+    if args.command == "batch":
+        return _run_batch(args)
+    return 1
 
-    if args.command != "review":
-        return 1
 
+def _run_review(args) -> int:
     path = Path(args.file)
     if not path.is_file():
         raise SystemExit(f"文件不存在：{path}")
@@ -76,10 +94,7 @@ def main(argv: list[str] | None = None) -> int:
     removed = len(parsed_text) - len(cleaned_text)
     logger.info(
         "",
-        extra={
-            "event": "pipeline.parse_done",
-            "chars": len(parsed_text),
-        },
+        extra={"event": "pipeline.parse_done", "chars": len(parsed_text)},
     )
     logger.info(
         "",
@@ -133,9 +148,65 @@ def main(argv: list[str] | None = None) -> int:
             "run_id": run_id,
             "risk_count": report["meta"]["risk_count"],
             "elapsed": elapsed,
+            "tokens": report["meta"]["tokens"],
         },
     )
     print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
+def _run_batch(args) -> int:
+    directory = Path(args.directory)
+    if not directory.is_dir():
+        raise SystemExit(f"目录不存在：{directory}")
+
+    run_id = f"batch_{_new_run_id()}"
+    log_path = setup_logging(run_id)
+    started = time.monotonic()
+    logger.info(
+        "",
+        extra={
+            "event": "batch.run_start",
+            "run_id": run_id,
+            "directory": str(directory.resolve()),
+            "workers": args.workers,
+            "rps": args.rps,
+            "max_inflight": args.max_inflight,
+            "chaos": args.chaos,
+            "log": str(log_path),
+        },
+    )
+
+    throttle = RequestThrottle(args.rps, args.max_inflight)
+    client = DeepSeekLLMClient(
+        throttle=throttle,
+        chaos=args.chaos,
+        chaos_rate=args.chaos_rate,
+    )
+    trace_root = Path(f"trace_{run_id}") if args.trace else None
+
+    summary = run_batch(
+        directory,
+        client,
+        args.workers,
+        run_id,
+        trace_root=trace_root,
+    )
+    elapsed = round(time.monotonic() - started, 3)
+    summary["batch_elapsed"] = elapsed
+    logger.info(
+        "",
+        extra={
+            "event": "batch.run_done",
+            "run_id": run_id,
+            "ok": summary["ok"],
+            "llm_failed": summary["llm_failed"],
+            "failed": summary["failed"],
+            "elapsed": elapsed,
+            "tokens": summary["tokens"],
+        },
+    )
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
 
 

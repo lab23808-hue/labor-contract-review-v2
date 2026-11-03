@@ -9,3 +9,4 @@ mineru
 pypdf
 openai
 python-dotenv
+psutil
