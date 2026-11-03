@@ -55,12 +55,30 @@ def main(argv: list[str] | None = None) -> int:
 
     batch = subparsers.add_parser("batch", help="对目录内合同批量审查")
     batch.add_argument("directory")
-    batch.add_argument("--workers", type=int, default=4)
+    batch.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="并发 worker 数；批量扫描时通常设为 max_inflight",
+    )
     batch.add_argument("--trace", action="store_true")
     batch.add_argument("--chaos", action="store_true")
     batch.add_argument("--chaos-rate", type=float, default=0.2)
-    batch.add_argument("--rps", type=float, default=8.0)
-    batch.add_argument("--max-inflight", type=int, default=8)
+    batch.add_argument(
+        "--rps",
+        type=float,
+        default=8.0,
+        help="令牌桶每秒请求数，默认 8",
+    )
+    batch.add_argument(
+        "--max-inflight",
+        type=int,
+        default=8,
+        help=(
+            "同时在途的 LLM 请求上限。默认 8（延迟友好）；"
+            "批量吞吐可调到 32（M14：吞吐 +56%%，p50 约 3.6 倍）"
+        ),
+    )
 
     args = parser.parse_args(argv)
     if args.command == "review":
