@@ -34,6 +34,7 @@ def main():
         rps=8,
         queue_limit=50,
         rate_limit=100,
+        store_path=":memory:",
     )
     with TestClient(app) as client:
         def upload(name):

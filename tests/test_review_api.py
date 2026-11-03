@@ -45,6 +45,7 @@ class BlockingLLM:
 
 
 def _app(**kwargs):
+    kwargs.setdefault("store_path", ":memory:")
     return create_review_app(
         client=FakeLLM(FAKE_RESPONSE),
         parsers={"txt": TxtParser(), "docx": DocxParser()},
@@ -102,6 +103,7 @@ def test_queue_full_returns_503_and_does_not_enqueue():
         workers=1,
         queue_limit=1,
         rate_limit=100,
+        store_path=":memory:",
     )
     with TestClient(app) as client:
         first = _upload(client)
@@ -172,6 +174,7 @@ def test_failed_item_does_not_stop_other_tasks():
         workers=2,
         queue_limit=50,
         rate_limit=100,
+        store_path=":memory:",
     )
     with TestClient(app) as client:
         good = _upload(client)

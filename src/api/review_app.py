@@ -6,12 +6,15 @@ from fastapi import APIRouter, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.review_tasks import (
+    DEFAULT_CLEANUP_INTERVAL,
     DEFAULT_MAX_FILE_SIZE,
     DEFAULT_MAX_INFLIGHT,
     DEFAULT_QUEUE_LIMIT,
     DEFAULT_RATE_LIMIT,
     DEFAULT_RATE_WINDOW,
     DEFAULT_RPS,
+    DEFAULT_STORE_PATH,
+    DEFAULT_TTL_SECONDS,
     DEFAULT_WORKERS,
     ReviewTaskManager,
 )
@@ -82,6 +85,8 @@ def get_result(task_id: str, request: Request) -> dict[str, Any]:
     manager = request.app.state.review_manager
     record = manager.get(task_id)
     if record is None:
+        if manager.is_expired(task_id):
+            raise HTTPException(status_code=410, detail="任务已过期")
         raise HTTPException(status_code=404, detail="任务不存在")
     return {
         "task_id": record.task_id,
@@ -106,6 +111,9 @@ def create_review_app(
     rate_limit: int = DEFAULT_RATE_LIMIT,
     rate_window: float = DEFAULT_RATE_WINDOW,
     max_file_size: int = DEFAULT_MAX_FILE_SIZE,
+    store_path: Path | str = DEFAULT_STORE_PATH,
+    ttl_seconds: float = DEFAULT_TTL_SECONDS,
+    cleanup_interval: float = DEFAULT_CLEANUP_INTERVAL,
 ) -> FastAPI:
     if client is None:
         from infra.llm_client import DeepSeekLLMClient
@@ -126,6 +134,9 @@ def create_review_app(
         rate_limit=rate_limit,
         rate_window=rate_window,
         max_file_size=max_file_size,
+        store_path=store_path,
+        ttl_seconds=ttl_seconds,
+        cleanup_interval=cleanup_interval,
     )
 
     @asynccontextmanager
