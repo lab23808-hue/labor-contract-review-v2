@@ -264,6 +264,11 @@ class ReviewTaskManager:
             thread_name_prefix="review-task",
         )
         self._admission = threading.BoundedSemaphore(queue_limit)
+        # 并发约定（多线程读写，勿引入锁，遵守以下三条即可）：
+        #   - 读取一律走 .get()，禁止 `in` + `[]` 两步式访问
+        #   - 遍历前必须 list() 快照
+        #   - record 对象一经取出，读其字段恒安全（引用计数保证存活）；
+        #     但若记录可能已被 TTL 清理，回写字段前需确认该场景可接受
         self._tasks: dict[str, TaskRecord] = {}
         self._lock = threading.Lock()
         self._closed = False
@@ -338,19 +343,20 @@ class ReviewTaskManager:
     def cleanup_expired(self) -> int:
         now = time.time()
         cutoff = now - self.ttl_seconds
-        task_ids = self.store.delete_expired(cutoff, now)
-        if task_ids:
+        expired = set(self.store.delete_expired(cutoff, now))
+        if expired:
             with self._lock:
-                for task_id in task_ids:
-                    self._tasks.pop(task_id, None)
+                for task_id, _ in list(self._tasks.items()):
+                    if task_id in expired:
+                        self._tasks.pop(task_id, None)
             logger.info(
                 "",
                 extra={
                     "event": "task.expired",
-                    "count": len(task_ids),
+                    "count": len(expired),
                 },
             )
-        return len(task_ids)
+        return len(expired)
 
     def close(self) -> None:
         if self._closed:
@@ -398,7 +404,9 @@ class ReviewTaskManager:
             if row["status"] == "processing":
                 self.store.mark_queued(row["task_id"], now)
                 with self._lock:
-                    self._tasks[row["task_id"]].status = "queued"
+                    record = self._tasks.get(row["task_id"])
+                    if record is not None:
+                        record.status = "queued"
                 logger.info(
                     "",
                     extra={
