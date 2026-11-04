@@ -1,10 +1,12 @@
 import json
+import sqlite3
 import time
 
+import pytest
 from fastapi.testclient import TestClient
 
 from api.review_app import create_review_app
-from app.review_tasks import ReviewTaskStore
+from app.review_tasks import ReviewTaskManager, ReviewTaskStore
 from infra.docx_parser import DocxParser
 from infra.llm_client import FakeLLM
 from infra.txt_parser import TxtParser
@@ -180,3 +182,64 @@ def test_processing_task_recovers_to_terminal_state(tmp_path):
 
     assert body["status"] in ("done", "failed")
     assert body["status"] not in ("queued", "processing")
+
+
+@pytest.fixture()
+def manager(tmp_path):
+    review_manager = ReviewTaskManager(
+        client=FakeLLM({"risks": [], "other_observations": []}),
+        parsers={"txt": TxtParser()},
+        workers=1,
+        queue_limit=2,
+        rate_limit=100,
+        store_path=str(tmp_path / "submit.sqlite"),
+        cleanup_interval=3600,
+    )
+    yield review_manager
+    review_manager.close()
+
+
+def test_submit_releases_admission_when_store_fails(
+    manager, monkeypatch
+):
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("db locked")
+
+    monkeypatch.setattr(manager.store, "create_task", boom)
+    before = manager._admission._value
+
+    assert manager.submit("a.pdf", b"x") is None
+    assert manager._admission._value == before
+    assert len(manager._tasks) == 0
+
+
+def test_submit_survives_repeated_store_failures(
+    manager, monkeypatch
+):
+    def boom(*args, **kwargs):
+        raise sqlite3.OperationalError("db locked")
+
+    monkeypatch.setattr(manager.store, "create_task", boom)
+    capacity = manager._admission._value
+    for _ in range(capacity):
+        assert manager.submit("a.pdf", b"x") is None
+
+    monkeypatch.undo()
+    task_id = manager.submit("b.pdf", b"x")
+
+    assert task_id is not None
+
+
+def test_submit_cleans_up_when_executor_fails(
+    manager, monkeypatch
+):
+    def boom(*args, **kwargs):
+        raise RuntimeError("cannot schedule new futures")
+
+    monkeypatch.setattr(manager._executor, "submit", boom)
+    before = manager._admission._value
+
+    assert manager.submit("a.txt", b"x") is None
+    assert manager._admission._value == before
+    assert len(manager._tasks) == 0
+    assert manager.store.list_all() == []

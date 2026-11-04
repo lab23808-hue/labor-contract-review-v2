@@ -150,6 +150,14 @@ class ReviewTaskStore:
             )
             self._conn.commit()
 
+    def delete_task(self, task_id: str) -> None:
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM review_tasks WHERE task_id=?",
+                (task_id,),
+            )
+            self._conn.commit()
+
     def get(self, task_id: str):
         with self._lock:
             return self._conn.execute(
@@ -274,28 +282,24 @@ class ReviewTaskManager:
 
         task_id = uuid.uuid4().hex
         now = time.time()
-        record = TaskRecord(
-            task_id=task_id, filename=filename, created_at=now
-        )
-        with self._lock:
-            self._tasks[task_id] = record
         try:
+            record = TaskRecord(
+                task_id=task_id, filename=filename, created_at=now
+            )
             self.store.create_task(task_id, filename, content, now)
+            with self._lock:
+                self._tasks[task_id] = record
             self._executor.submit(
                 self._run, task_id, filename, content
             )
-        except Exception as exc:
-            with self._lock:
-                record.status = "failed"
-                record.error = f"{type(exc).__name__}: {exc}"
-                record.finished_at = time.time()
-            try:
-                self.store.mark_failed(
-                    task_id, record.error, time.time()
-                )
-            except Exception:
-                logger.exception("task.persist_failed")
+        except Exception:
             self._admission.release()
+            with self._lock:
+                self._tasks.pop(task_id, None)
+            try:
+                self.store.delete_task(task_id)
+            except Exception:
+                logger.exception("task.cleanup_failed")
             return None
         return task_id
 
