@@ -346,9 +346,8 @@ class ReviewTaskManager:
         expired = set(self.store.delete_expired(cutoff, now))
         if expired:
             with self._lock:
-                for task_id, _ in list(self._tasks.items()):
-                    if task_id in expired:
-                        self._tasks.pop(task_id, None)
+                for task_id in expired:
+                    self._tasks.pop(task_id, None)
             logger.info(
                 "",
                 extra={
