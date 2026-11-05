@@ -7,6 +7,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
 
+from app.review_service import ReviewView
+
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 templates = Jinja2Templates(
     env=Environment(
@@ -109,7 +111,7 @@ def error_context(
     )
 
 
-def status_context(record) -> dict[str, Any]:
+def status_context(record: ReviewView) -> dict[str, Any]:
     labels = {"queued": "排队中", "processing": "审查中"}
     messages = {
         "queued": "任务已受理，正在等待处理。",
@@ -118,7 +120,7 @@ def status_context(record) -> dict[str, Any]:
     return _base_context(
         mode="status",
         title="劳动合同审查",
-        contract_id=record.task_id,
+        contract_id=record.contract_id,
         filename=record.filename,
         status_label=labels.get(record.status, "处理中"),
         message=messages.get(record.status, "正在处理。"),
@@ -126,11 +128,11 @@ def status_context(record) -> dict[str, Any]:
     )
 
 
-def failed_context(record) -> dict[str, Any]:
+def failed_context(record: ReviewView) -> dict[str, Any]:
     return _base_context(
         mode="error",
         title="劳动合同审查",
-        contract_id=record.task_id,
+        contract_id=record.contract_id,
         filename=record.filename,
         status_label="审查失败",
         message="审查过程中出现错误，未能完成本次审查。",
@@ -138,7 +140,7 @@ def failed_context(record) -> dict[str, Any]:
     )
 
 
-def report_context(record) -> dict[str, Any]:
+def report_context(record: ReviewView) -> dict[str, Any]:
     result = record.result or {}
     risks = []
     for risk in result.get("risks") or []:
@@ -188,7 +190,7 @@ def report_context(record) -> dict[str, Any]:
     context = _base_context(
         mode="report",
         title="劳动合同审查报告",
-        contract_id=record.task_id,
+        contract_id=record.contract_id,
         filename=record.filename,
         status_label="审查完成",
     )

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from api.dependencies import get_review_service
-from api.review_presenters import (
+from api.presenters import (
     error_context,
     failed_context,
     render_page,
@@ -26,7 +26,7 @@ def get_result(contract_id: str, manager: ServiceDep) -> dict[str, Any]:
             raise HTTPException(status_code=410, detail="合同审查已过期")
         raise HTTPException(status_code=404, detail="合同审查不存在")
     return {
-        "contract_id": record.task_id,
+        "contract_id": record.contract_id,
         "status": record.status,
         "result": record.result,
         "error": record.error,

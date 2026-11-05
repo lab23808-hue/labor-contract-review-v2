@@ -4,8 +4,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
-from app.review import run_full_review
-from domain.cleaning import clean_text
+from app.parsing_service import parse_and_clean
+from app.review_engine import run_full_review
 from domain.extractor import extract_fields
 from domain.ports import DocumentParser, TraceSink
 
@@ -23,14 +23,14 @@ def list_contracts(
     )
 
 
-def read_parsed(
+def read_cleaned(
     path: Path, parsers: Mapping[str, DocumentParser]
 ) -> str:
     suffix = path.suffix.lower().lstrip(".")
-    parser = parsers.get(suffix)
-    if parser is None:
-        raise ValueError(f"不支持的文件类型：{path.suffix}")
-    return parser.parse(path.name, path.read_bytes())
+    _, cleaned = parse_and_clean(
+        parsers, path.name, path.read_bytes(), suffix
+    )
+    return cleaned
 
 
 def run_batch(
@@ -55,8 +55,7 @@ def run_batch(
             trace = trace_factory(trace_dir)
         started = time.monotonic()
         try:
-            parsed = read_parsed(path, parsers)
-            cleaned = clean_text(parsed)
+            cleaned = read_cleaned(path, parsers)
             report = run_full_review(
                 cleaned,
                 extract_fields(cleaned),

@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from app.review import run_full_review
+from app.review_engine import run_full_review
 from domain.extractor import extract_fields
 from domain.ports import ReviewTaskRepository
 
@@ -16,7 +16,7 @@ MAX_WORKERS = 16
 
 @dataclass
 class TaskRecord:
-    task_id: str
+    contract_id: str
     filename: str
     status: str = "queued"
     result: Optional[dict[str, Any]] = None
@@ -69,76 +69,76 @@ class ReviewQueue:
         )
         self._cleanup_thread.start()
 
-    def reserve(self, task_id: str, filename: str = "") -> bool:
+    def reserve(self, contract_id: str, filename: str = "") -> bool:
         if not self._admission.acquire(blocking=False):
             return False
 
         now = time.time()
         record = TaskRecord(
-            task_id=task_id, filename=filename, created_at=now
+            contract_id=contract_id, filename=filename, created_at=now
         )
         with self._lock:
-            self._tasks[task_id] = record
+            self._tasks[contract_id] = record
         try:
-            self.store.create(task_id, filename, None, now)
+            self.store.create(contract_id, filename, None, now)
         except Exception:
             self._admission.release()
             with self._lock:
-                self._tasks.pop(task_id, None)
+                self._tasks.pop(contract_id, None)
             try:
-                self.store.delete(task_id)
+                self.store.delete(contract_id)
             except Exception:
                 logger.exception("task.cleanup_failed")
             return False
         return True
 
-    def submit_reserved(self, task_id: str, cleaned_text: str) -> bool:
+    def submit_reserved(self, contract_id: str, cleaned_text: str) -> bool:
         with self._lock:
-            record = self._tasks.get(task_id)
+            record = self._tasks.get(contract_id)
         if record is None:
             return False
 
         try:
-            self.store.set_cleaned_text(task_id, cleaned_text, time.time())
+            self.store.set_cleaned_text(contract_id, cleaned_text, time.time())
         except Exception:
             logger.exception("task.persist_failed")
-            self.fail_reserved(task_id, "清洗文本持久化失败")
+            self.fail_reserved(contract_id, "清洗文本持久化失败")
             return False
         try:
-            self._executor.submit(self._run, task_id, cleaned_text)
+            self._executor.submit(self._run, contract_id, cleaned_text)
         except Exception:
-            self.release_reservation(task_id)
+            self.release_reservation(contract_id)
             return False
         return True
 
     def submit(
         self,
-        task_id: str,
+        contract_id: str,
         cleaned_text: str,
         filename: str = "",
     ) -> Optional[str]:
-        if not self.reserve(task_id, filename):
+        if not self.reserve(contract_id, filename):
             return None
-        if not self.submit_reserved(task_id, cleaned_text):
+        if not self.submit_reserved(contract_id, cleaned_text):
             return None
-        return task_id
+        return contract_id
 
-    def release_reservation(self, task_id: str) -> None:
+    def release_reservation(self, contract_id: str) -> None:
         with self._lock:
-            self._tasks.pop(task_id, None)
+            self._tasks.pop(contract_id, None)
         try:
-            self.store.delete(task_id)
+            self.store.delete(contract_id)
         except Exception:
             logger.exception("task.cleanup_failed")
         self._admission.release()
 
-    def cancel(self, task_id: str) -> bool:
+    def cancel(self, contract_id: str) -> bool:
         with self._lock:
-            record = self._tasks.pop(task_id, None)
+            record = self._tasks.pop(contract_id, None)
         if record is None:
             return False
         try:
-            self.store.delete(task_id)
+            self.store.delete(contract_id)
         except Exception:
             logger.exception("task.cleanup_failed")
         if record.status == "queued":
@@ -146,26 +146,26 @@ class ReviewQueue:
             self._admission.release()
         return True
 
-    def fail_reserved(self, task_id: str, error: str) -> None:
+    def fail_reserved(self, contract_id: str, error: str) -> None:
         now = time.time()
         with self._lock:
-            record = self._tasks.get(task_id)
+            record = self._tasks.get(contract_id)
             if record is not None:
                 record.status = "failed"
                 record.error = error
                 record.finished_at = now
         try:
-            self.store.mark_failed(task_id, error, now)
+            self.store.mark_failed(contract_id, error, now)
         except Exception:
             logger.exception("task.persist_failed")
         self._admission.release()
 
-    def get(self, task_id: str) -> Optional[TaskRecord]:
+    def get(self, contract_id: str) -> Optional[TaskRecord]:
         with self._lock:
-            return self._tasks.get(task_id)
+            return self._tasks.get(contract_id)
 
-    def is_expired(self, task_id: str) -> bool:
-        return self.store.is_expired(task_id)
+    def is_expired(self, contract_id: str) -> bool:
+        return self.store.is_expired(contract_id)
 
     def stats(self) -> dict[str, Any]:
         with self._lock:
@@ -198,8 +198,8 @@ class ReviewQueue:
         expired = set(self.store.delete_expired(cutoff, now))
         if expired:
             with self._lock:
-                for task_id in expired:
-                    self._tasks.pop(task_id, None)
+                for contract_id in expired:
+                    self._tasks.pop(contract_id, None)
             logger.info(
                 "",
                 extra={
@@ -224,7 +224,7 @@ class ReviewQueue:
         now = time.time()
         for task in tasks:
             record = TaskRecord(
-                task_id=task.contract_id,
+                contract_id=task.contract_id,
                 filename=task.filename,
                 status=task.status,
                 result=task.result,
@@ -237,7 +237,7 @@ class ReviewQueue:
                 ),
             )
             with self._lock:
-                self._tasks[record.task_id] = record
+                self._tasks[record.contract_id] = record
 
         for task in tasks:
             if task.status not in ("queued", "processing"):
@@ -257,7 +257,7 @@ class ReviewQueue:
                     "",
                     extra={
                         "event": "task.requeued",
-                        "task_id": task.contract_id,
+                        "contract_id": task.contract_id,
                         "previous_status": "processing",
                     },
                 )
@@ -266,7 +266,7 @@ class ReviewQueue:
                     "",
                     extra={
                         "event": "task.recovery_deferred",
-                        "task_id": task.contract_id,
+                        "contract_id": task.contract_id,
                     },
                 )
                 continue
@@ -274,7 +274,7 @@ class ReviewQueue:
                 "",
                 extra={
                     "event": "task.recovered",
-                    "task_id": task.contract_id,
+                    "contract_id": task.contract_id,
                 },
             )
             self._executor.submit(
@@ -283,51 +283,51 @@ class ReviewQueue:
                 task.cleaned_text,
             )
 
-    def _mark_failed(self, task_id: str, error: str) -> None:
+    def _mark_failed(self, contract_id: str, error: str) -> None:
         now = time.time()
         with self._lock:
-            record = self._tasks.get(task_id)
+            record = self._tasks.get(contract_id)
             if record is not None:
                 record.status = "failed"
                 record.error = error
                 record.finished_at = now
-        self.store.mark_failed(task_id, error, now)
+        self.store.mark_failed(contract_id, error, now)
 
-    def _run(self, task_id: str, cleaned_text: str) -> None:
+    def _run(self, contract_id: str, cleaned_text: str) -> None:
         now = time.time()
         with self._lock:
-            record = self._tasks.get(task_id)
+            record = self._tasks.get(contract_id)
             if record is None:
                 # 排队期间被 cancel，名额已在 cancel 中释放
                 return
             record.status = "processing"
             record.started_at = now
         try:
-            self.store.mark_processing(task_id, now)
+            self.store.mark_processing(contract_id, now)
             report = run_full_review(
                 cleaned_text,
                 extract_fields(cleaned_text),
                 llm_client=self.client,
-                run_id=task_id,
+                run_id=contract_id,
             )
             now = time.time()
             with self._lock:
-                if self._tasks.get(task_id) is not record:
+                if self._tasks.get(contract_id) is not record:
                     return
                 record.result = report
                 record.status = "done"
                 record.finished_at = now
-            self.store.mark_done(task_id, report, now)
+            self.store.mark_done(contract_id, report, now)
         except Exception as exc:
             now = time.time()
             error = f"{type(exc).__name__}: {exc}"
             with self._lock:
-                if self._tasks.get(task_id) is not record:
+                if self._tasks.get(contract_id) is not record:
                     return
                 record.status = "failed"
                 record.error = error
                 record.finished_at = now
-            self.store.mark_failed(task_id, error, now)
+            self.store.mark_failed(contract_id, error, now)
         finally:
             self._admission.release()
 

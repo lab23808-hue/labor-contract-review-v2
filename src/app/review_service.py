@@ -1,6 +1,18 @@
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from app.review_queue import ReviewQueue, TaskRecord
+
+
+@dataclass(frozen=True)
+class ReviewView:
+    contract_id: str
+    filename: str
+    status: str
+    result: Optional[dict[str, Any]]
+    error: Optional[str]
+    created_at: float
+    finished_at: Optional[float]
 
 
 class ReviewService:
@@ -26,8 +38,11 @@ class ReviewService:
     def cancel(self, contract_id: str) -> bool:
         return self._queue.cancel(contract_id)
 
-    def get(self, contract_id: str) -> Optional[TaskRecord]:
-        return self._queue.get(contract_id)
+    def get(self, contract_id: str) -> Optional[ReviewView]:
+        record = self._queue.get(contract_id)
+        if record is None:
+            return None
+        return _to_view(record)
 
     def is_expired(self, contract_id: str) -> bool:
         return self._queue.is_expired(contract_id)
@@ -37,3 +52,15 @@ class ReviewService:
 
     def cleanup_expired(self) -> int:
         return self._queue.cleanup_expired()
+
+
+def _to_view(record: TaskRecord) -> ReviewView:
+    return ReviewView(
+        contract_id=record.contract_id,
+        filename=record.filename,
+        status=record.status,
+        result=record.result,
+        error=record.error,
+        created_at=record.created_at,
+        finished_at=record.finished_at,
+    )

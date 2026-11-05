@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from app.batch import run_batch
-from app.review import run_full_review
+from app.offline_batch import run_batch
+from app.review_engine import run_full_review
 from cli import main
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields

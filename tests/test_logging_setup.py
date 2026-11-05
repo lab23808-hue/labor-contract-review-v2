@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from app.review import run_full_review
+from app.review_engine import run_full_review
 from config.llm import LLMConfig
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields

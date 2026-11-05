@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.review import run_llm_branch
+from app.review_engine import run_llm_branch
 from config.llm import get_llm_config
 from domain.extractor import extract_fields
 from infra.llm_client import DeepSeekLLMClient

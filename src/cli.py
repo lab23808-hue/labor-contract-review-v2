@@ -13,33 +13,25 @@ _SRC = Path(__file__).resolve().parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from app.batch import run_batch
-from app.review import run_full_review
+from app.offline_batch import run_batch
+from app.review_engine import run_full_review
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields
-from infra.docx_parser import DocxParser
 from infra.llm_client import DeepSeekLLMClient
-from infra.mineru_parser import MinerUParser
+from infra.parsers import build_parsers
 from infra.rate_limiter import RequestThrottle
 from infra.trace import TraceRecorder
-from infra.txt_parser import TxtParser
 from logging_setup import setup_logging
 
 logger = logging.getLogger(__name__)
 
 
-def _read_parsed(path: Path) -> str:
-    suffix = path.suffix.lower()
-    content = path.read_bytes()
-    if suffix == ".txt":
-        return TxtParser().parse(path.name, content)
-    if suffix == ".docx":
-        return DocxParser().parse(path.name, content)
-    if suffix == ".pdf":
-        from infra.mineru_parser import MinerUParser
-
-        return MinerUParser().parse(path.name, content)
-    raise SystemExit(f"不支持的文件类型：{suffix or '(无扩展名)'}")
+def _read_parsed(path: Path, parsers) -> str:
+    suffix = path.suffix.lower().lstrip(".")
+    parser = parsers.get(suffix)
+    if parser is None:
+        raise SystemExit(f"不支持的文件类型：{path.suffix or '(无扩展名)'}")
+    return parser.parse(path.name, path.read_bytes())
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -108,7 +100,8 @@ def _run_review(args) -> int:
         },
     )
 
-    parsed_text = _read_parsed(path)
+    parsers = build_parsers()
+    parsed_text = _read_parsed(path, parsers)
     cleaned_text = clean_text(parsed_text)
     removed = len(parsed_text) - len(cleaned_text)
     logger.info(
@@ -210,11 +203,7 @@ def _run_batch(args) -> int:
         client,
         args.workers,
         run_id,
-        parsers={
-            "txt": TxtParser(),
-            "docx": DocxParser(),
-            "pdf": MinerUParser(),
-        },
+        parsers=build_parsers(),
         trace_root=trace_root,
         trace_factory=TraceRecorder if args.trace else None,
     )

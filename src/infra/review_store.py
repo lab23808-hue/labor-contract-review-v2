@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS review_tasks (
+    -- 领域名为 contract_id；列名保留 task_id 以兼容旧库
     task_id TEXT PRIMARY KEY,
     filename TEXT NOT NULL,
     status TEXT NOT NULL,

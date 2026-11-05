@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi.testclient import TestClient
 
 from app_factory import make_app
-from app.review import run_full_review
+from app.review_engine import run_full_review
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields
 from infra.docx_parser import DocxParser

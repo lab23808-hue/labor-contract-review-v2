@@ -18,7 +18,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from app.review import run_full_review
+from app.review_engine import run_full_review
 from config.llm import get_llm_config
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields

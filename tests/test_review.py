@@ -1,4 +1,4 @@
-from app.review import run_llm_branch
+from app.review_engine import run_llm_branch
 from infra.llm_client import FakeLLM
 
 CLEANED = "劳动合同\n第一条 试用期三个月。\n第二条 月工资为人民币8000元。"

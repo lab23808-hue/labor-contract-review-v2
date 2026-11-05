@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -15,25 +16,14 @@ from domain.ports import (
     DocumentValidator,
 )
 from domain.validation import UploadPolicy
-from infra.docx_parser import DocxParser
 from infra.llm_client import DeepSeekLLMClient
-from infra.mineru_parser import MinerUParser
+from infra.parsers import build_parsers
 from infra.pdf_validator import PdfValidator
 from infra.rate_limiter import RequestThrottle, SlidingWindowRateLimiter
 from infra.review_store import ReviewTaskStore
 from infra.sqlite_repository import SQLiteContractRepository
-from infra.txt_parser import TxtParser
 
-
-def build_parsers() -> dict[str, DocumentParser]:
-    mineru = MinerUParser()
-    return {
-        "txt": TxtParser(),
-        "docx": DocxParser(),
-        "pdf": mineru,
-        "jpg": mineru,
-        "png": mineru,
-    }
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -66,7 +56,19 @@ def build_container(
     contract_repository = (
         repository if repository is not None else SQLiteContractRepository()
     )
-    parsers = parsers if parsers is not None else build_parsers()
+    if parsers is None:
+        parsers = build_parsers()
+        missing = sorted(
+            set(settings.ALLOWED_EXTENSIONS) - set(parsers)
+        )
+        if missing:
+            logger.warning(
+                "",
+                extra={
+                    "event": "config.allowed_without_parser",
+                    "missing": missing,
+                },
+            )
     validator = validator if validator is not None else PdfValidator()
 
     workers = (

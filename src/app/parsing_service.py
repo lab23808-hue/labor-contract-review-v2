@@ -13,6 +13,21 @@ from domain.ports import (
 )
 
 
+def parse_and_clean(
+    parsers: Mapping[str, DocumentParser],
+    filename: str,
+    content: bytes,
+    file_format: str,
+) -> tuple[str, str]:
+    parser = parsers.get(file_format)
+    if parser is None:
+        raise UnsupportedFormatError(
+            f"不支持的解析格式：{file_format}"
+        )
+    parsed_markdown = parser.parse(filename, content)
+    return parsed_markdown, clean_text(parsed_markdown)
+
+
 class ParsingService:
     def __init__(
         self,
@@ -39,17 +54,12 @@ class ParsingService:
     def execute(self, contract_id: str) -> Contract:
         contract = self._get(contract_id)
         try:
-            parser = self._parsers.get(contract.file_format)
-            if parser is None:
-                raise UnsupportedFormatError(
-                    f"不支持的解析格式：{contract.file_format}"
-                )
-
-            parsed_markdown = parser.parse(
+            parsed_markdown, cleaned_text = parse_and_clean(
+                self._parsers,
                 contract.filename,
                 self._repository.read_content(contract),
+                contract.file_format,
             )
-            cleaned_text = clean_text(parsed_markdown)
             parsed_bytes = parsed_markdown.encode("utf-8")
             cleaned_bytes = cleaned_text.encode("utf-8")
             artifacts = self._repository.write_artifacts(
