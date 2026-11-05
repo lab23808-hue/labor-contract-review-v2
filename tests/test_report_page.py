@@ -3,7 +3,7 @@ import time
 
 from fastapi.testclient import TestClient
 
-from api.review_app import create_review_app
+from app_factory import make_app
 from infra.docx_parser import DocxParser
 from infra.llm_client import FakeLLM
 from infra.txt_parser import TxtParser
@@ -76,7 +76,7 @@ def _app(response=None, **kwargs):
     if response is None:
         response = REPORT_RESPONSE
     kwargs.setdefault("store_path", ":memory:")
-    return create_review_app(
+    return make_app(
         client=FakeLLM(response),
         parsers={"txt": TxtParser(), "docx": DocxParser()},
         rate_limit=100,
@@ -91,26 +91,26 @@ def _upload(
     content_type="text/plain",
 ):
     return client.post(
-        "/upload", files={"file": (name, content, content_type)}
+        "/contracts", files={"file": (name, content, content_type)}
     )
 
 
-def _wait(client, task_id, timeout=5):
+def _wait(client, contract_id, timeout=5):
     deadline = time.time() + timeout
     while time.time() < deadline:
-        body = client.get(f"/result/{task_id}").json()
+        body = client.get(f"/result/{contract_id}").json()
         if body["status"] in ("done", "failed"):
             return body
         time.sleep(0.01)
-    raise AssertionError(f"task {task_id} did not finish")
+    raise AssertionError(f"task {contract_id} did not finish")
 
 
 def test_done_report_contains_risk_details():
     app = _app()
     with TestClient(app) as client:
-        task_id = _upload(client).json()["task_id"]
-        assert _wait(client, task_id)["status"] == "done"
-        page = client.get(f"/report/{task_id}")
+        contract_id = _upload(client).json()["contract_id"]
+        assert _wait(client, contract_id)["status"] == "done"
+        page = client.get(f"/report/{contract_id}")
 
     assert page.status_code == 200
     html = page.text
@@ -130,11 +130,11 @@ def test_done_report_contains_risk_details():
 def test_no_risk_report_shows_checks():
     app = _app(response=EMPTY_RESPONSE)
     with TestClient(app) as client:
-        task_id = _upload(
+        contract_id = _upload(
             client, content=CLEAN_CONTRACT.encode()
-        ).json()["task_id"]
-        assert _wait(client, task_id)["status"] == "done"
-        page = client.get(f"/report/{task_id}")
+        ).json()["contract_id"]
+        assert _wait(client, contract_id)["status"] == "done"
+        page = client.get(f"/report/{contract_id}")
 
     assert page.status_code == 200
     html = page.text
@@ -145,7 +145,7 @@ def test_no_risk_report_shows_checks():
 
 def test_status_and_failed_pages():
     blocking = BlockingLLM()
-    app = create_review_app(
+    app = make_app(
         client=blocking,
         parsers={"txt": TxtParser(), "docx": DocxParser()},
         workers=1,
@@ -154,9 +154,11 @@ def test_status_and_failed_pages():
         store_path=":memory:",
     )
     with TestClient(app) as client:
-        first = _upload(client).json()["task_id"]
+        first = _upload(client).json()["contract_id"]
         assert blocking.started.wait(timeout=5)
-        second = _upload(client).json()["task_id"]
+        second = _upload(
+            client, content=(REPORT_CONTRACT + "\n第二份").encode()
+        ).json()["contract_id"]
 
         processing = client.get(f"/report/{first}")
         queued = client.get(f"/report/{second}")
@@ -177,12 +179,12 @@ def test_status_and_failed_pages():
         failed_id = _upload(
             client,
             name="broken.docx",
-            content=b"not a real docx",
+            content=b"PK\x03\x04not a real docx",
             content_type=(
                 "application/vnd.openxmlformats-officedocument."
                 "wordprocessingml.document"
             ),
-        ).json()["task_id"]
+        ).json()["contract_id"]
         assert _wait(client, failed_id)["status"] == "failed"
 
         failed = client.get(f"/report/{failed_id}")
@@ -195,14 +197,14 @@ def test_status_and_failed_pages():
 def test_expired_and_missing_report_pages():
     app = _app(ttl_seconds=0.01, cleanup_interval=3600)
     with TestClient(app) as client:
-        task_id = _upload(client).json()["task_id"]
-        assert _wait(client, task_id)["status"] == "done"
+        contract_id = _upload(client).json()["contract_id"]
+        assert _wait(client, contract_id)["status"] == "done"
 
         time.sleep(0.05)
         manager = app.state.review_manager
         assert manager.cleanup_expired() == 1
 
-        expired = client.get(f"/report/{task_id}")
+        expired = client.get(f"/report/{contract_id}")
         assert expired.status_code == 410
         assert "任务已过期" in expired.text
 
@@ -210,7 +212,7 @@ def test_expired_and_missing_report_pages():
         assert missing.status_code == 404
         assert "任务不存在" in missing.text
 
-        assert client.get(f"/result/{task_id}").status_code == 410
+        assert client.get(f"/result/{contract_id}").status_code == 410
         assert client.get("/result/does-not-exist").status_code == 404
 
 
@@ -236,17 +238,17 @@ def test_report_escapes_untrusted_html():
     )
     app = _app(response=xss_response)
     with TestClient(app) as client:
-        task_id = _upload(
+        contract_id = _upload(
             client,
-            name="<script>alert(1)</script>.txt",
+            name="script&alert(1).txt",
             content=contract.encode(),
-        ).json()["task_id"]
-        assert _wait(client, task_id)["status"] == "done"
-        page = client.get(f"/report/{task_id}")
+        ).json()["contract_id"]
+        assert _wait(client, contract_id)["status"] == "done"
+        page = client.get(f"/report/{contract_id}")
 
     html = page.text
     assert page.status_code == 200
     assert "<script>alert(2)</script>" not in html
     assert "&lt;script&gt;alert(2)&lt;/script&gt;" in html
-    assert "<script>alert(1)</script>" not in html
-    assert "&lt;script&gt;alert(1)&lt;/script&gt;.txt" in html
+    assert "script&alert(1).txt" not in html
+    assert "script&amp;alert(1).txt" in html

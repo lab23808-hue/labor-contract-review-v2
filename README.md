@@ -20,6 +20,12 @@ data/
         └── cleaned.txt
 ```
 
+## 上传统一入口（含审查）
+
+`POST /contracts` 是唯一上传入口：扩展名/大小/文件头校验 → 每 IP 滑动窗口限流 → 审查队列准入（满则 **503**）→ 落盘 → 后台解析并清洗 → 自动提交审查。「格式/大小/IP 限流/线程池准入」都在这一条路径上。`POST /contracts/batch` 对每个文件走同一条管线，单个文件失败不影响其他文件。
+
+审查结果按合同 ID 查询：`GET /result/{contract_id}`（JSON）、`GET /report/{contract_id}`（HTML）、`GET /stats`（队列状态）。上传返回的 `contract_id` 同时是审查任务 ID；删除合同时会一并取消其审查任务。
+
 ## 解析接口（异步）
 
 `POST /contracts/{id}/parse` 立即返回 **202**（`status=parsing`），解析在后台串行执行；客户端轮询 `GET /contracts/{id}`，直到 `status` 变为 `parsed` 或 `failed`。解析中重复提交同一合同返回 **409**。

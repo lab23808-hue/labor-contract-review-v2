@@ -3,18 +3,14 @@ import logging
 import sqlite3
 import threading
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Optional
 
 from app.review import run_full_review
 from config import settings
-from domain.cleaning import clean_text
 from domain.extractor import extract_fields
-from domain.ports import DocumentParser
-from infra.rate_limiter import SlidingWindowRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +19,6 @@ DEFAULT_WORKERS = settings.REVIEW_WORKERS
 DEFAULT_MAX_INFLIGHT = settings.REVIEW_MAX_INFLIGHT
 DEFAULT_RPS = settings.REVIEW_RPS
 DEFAULT_QUEUE_LIMIT = settings.REVIEW_QUEUE_LIMIT
-DEFAULT_RATE_LIMIT = settings.REVIEW_RATE_LIMIT
-DEFAULT_RATE_WINDOW = settings.REVIEW_RATE_WINDOW
-DEFAULT_MAX_FILE_SIZE = settings.MAX_UPLOAD_BYTES
 DEFAULT_TTL_SECONDS = settings.REVIEW_TTL_SECONDS
 DEFAULT_CLEANUP_INTERVAL = settings.REVIEW_CLEANUP_INTERVAL
 DEFAULT_STORE_PATH = Path(settings.REVIEW_STORE_PATH)
@@ -37,7 +30,7 @@ CREATE TABLE IF NOT EXISTS review_tasks (
     status TEXT NOT NULL,
     result_json TEXT,
     error TEXT,
-    content BLOB,
+    cleaned_text TEXT,
     created_at REAL NOT NULL,
     updated_at REAL NOT NULL
 );
@@ -73,22 +66,57 @@ class ReviewTaskStore:
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.executescript(_SCHEMA)
+            self._migrate()
             self._conn.commit()
+
+    def _migrate(self) -> None:
+        # 旧库用 content BLOB 存原始字节，新库改存清洗文本；
+        # CREATE TABLE IF NOT EXISTS 不会改已有表，需要显式补列。
+        columns = {
+            row["name"]
+            for row in self._conn.execute(
+                "PRAGMA table_info(review_tasks)"
+            )
+        }
+        if "cleaned_text" not in columns:
+            self._conn.execute(
+                "ALTER TABLE review_tasks ADD COLUMN cleaned_text TEXT"
+            )
+        if "content" in columns:
+            try:
+                self._conn.execute(
+                    "ALTER TABLE review_tasks DROP COLUMN content"
+                )
+            except sqlite3.OperationalError:
+                logger.warning(
+                    "", extra={"event": "task.migration_keep_content"}
+                )
 
     def create_task(
         self,
         task_id: str,
         filename: str,
-        content: bytes,
+        cleaned_text: Optional[str],
         now: float,
     ) -> None:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO review_tasks "
                 "(task_id, filename, status, result_json, error, "
-                "content, created_at, updated_at) "
+                "cleaned_text, created_at, updated_at) "
                 "VALUES (?, ?, 'queued', NULL, NULL, ?, ?, ?)",
-                (task_id, filename, content, now, now),
+                (task_id, filename, cleaned_text, now, now),
+            )
+            self._conn.commit()
+
+    def set_cleaned_text(
+        self, task_id: str, cleaned_text: str, now: float
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE review_tasks SET status='queued', "
+                "cleaned_text=?, updated_at=? WHERE task_id=?",
+                (cleaned_text, now, task_id),
             )
             self._conn.commit()
 
@@ -104,7 +132,7 @@ class ReviewTaskStore:
         with self._lock:
             self._conn.execute(
                 "UPDATE review_tasks SET status='done', "
-                "result_json=?, error=NULL, content=NULL, "
+                "result_json=?, error=NULL, cleaned_text=NULL, "
                 "updated_at=? WHERE task_id=?",
                 (result_json, now, task_id),
             )
@@ -116,7 +144,7 @@ class ReviewTaskStore:
         with self._lock:
             self._conn.execute(
                 "UPDATE review_tasks SET status='failed', "
-                "result_json=NULL, error=?, content=NULL, "
+                "result_json=NULL, error=?, cleaned_text=NULL, "
                 "updated_at=? WHERE task_id=?",
                 (error, now, task_id),
             )
@@ -203,13 +231,9 @@ class ReviewTaskManager:
     def __init__(
         self,
         client: Any,
-        parsers: Mapping[str, DocumentParser],
         workers: int = DEFAULT_WORKERS,
         max_inflight: int = DEFAULT_MAX_INFLIGHT,
         queue_limit: int = DEFAULT_QUEUE_LIMIT,
-        rate_limit: int = DEFAULT_RATE_LIMIT,
-        rate_window: float = DEFAULT_RATE_WINDOW,
-        max_file_size: int = DEFAULT_MAX_FILE_SIZE,
         store_path: Path | str = DEFAULT_STORE_PATH,
         ttl_seconds: float = DEFAULT_TTL_SECONDS,
         cleanup_interval: float = DEFAULT_CLEANUP_INTERVAL,
@@ -217,19 +241,11 @@ class ReviewTaskManager:
         if queue_limit <= 0:
             raise ValueError("queue_limit must be positive")
         self.client = client
-        self.parsers = dict(parsers)
         self.workers = min(max(1, workers), MAX_WORKERS)
         self.max_inflight = min(max(1, max_inflight), MAX_WORKERS)
         self.queue_limit = queue_limit
-        self.max_file_size = max_file_size
         self.ttl_seconds = ttl_seconds
         self.cleanup_interval = cleanup_interval
-        self.allowed_extensions = {
-            f".{name.lower()}" for name in self.parsers
-        }
-        self.rate_limiter = SlidingWindowRateLimiter(
-            rate_limit, rate_window
-        )
         self.store = ReviewTaskStore(store_path)
         self._executor = ThreadPoolExecutor(
             max_workers=self.workers,
@@ -253,22 +269,18 @@ class ReviewTaskManager:
         )
         self._cleanup_thread.start()
 
-    def submit(self, filename: str, content: bytes) -> Optional[str]:
+    def reserve(self, task_id: str, filename: str = "") -> bool:
         if not self._admission.acquire(blocking=False):
-            return None
+            return False
 
-        task_id = uuid.uuid4().hex
         now = time.time()
+        record = TaskRecord(
+            task_id=task_id, filename=filename, created_at=now
+        )
+        with self._lock:
+            self._tasks[task_id] = record
         try:
-            record = TaskRecord(
-                task_id=task_id, filename=filename, created_at=now
-            )
-            self.store.create_task(task_id, filename, content, now)
-            with self._lock:
-                self._tasks[task_id] = record
-            self._executor.submit(
-                self._run, task_id, filename, content
-            )
+            self.store.create_task(task_id, filename, None, now)
         except Exception:
             self._admission.release()
             with self._lock:
@@ -277,8 +289,76 @@ class ReviewTaskManager:
                 self.store.delete_task(task_id)
             except Exception:
                 logger.exception("task.cleanup_failed")
+            return False
+        return True
+
+    def submit_reserved(self, task_id: str, cleaned_text: str) -> bool:
+        with self._lock:
+            record = self._tasks.get(task_id)
+        if record is None:
+            return False
+
+        try:
+            self.store.set_cleaned_text(task_id, cleaned_text, time.time())
+        except Exception:
+            logger.exception("task.persist_failed")
+            self.fail_reserved(task_id, "清洗文本持久化失败")
+            return False
+        try:
+            self._executor.submit(self._run, task_id, cleaned_text)
+        except Exception:
+            self.release_reservation(task_id)
+            return False
+        return True
+
+    def submit(
+        self,
+        task_id: str,
+        cleaned_text: str,
+        filename: str = "",
+    ) -> Optional[str]:
+        if not self.reserve(task_id, filename):
+            return None
+        if not self.submit_reserved(task_id, cleaned_text):
             return None
         return task_id
+
+    def release_reservation(self, task_id: str) -> None:
+        with self._lock:
+            self._tasks.pop(task_id, None)
+        try:
+            self.store.delete_task(task_id)
+        except Exception:
+            logger.exception("task.cleanup_failed")
+        self._admission.release()
+
+    def cancel(self, task_id: str) -> bool:
+        with self._lock:
+            record = self._tasks.pop(task_id, None)
+        if record is None:
+            return False
+        try:
+            self.store.delete_task(task_id)
+        except Exception:
+            logger.exception("task.cleanup_failed")
+        if record.status == "queued":
+            # processing 由 worker 的 finally 释放；done/failed 早已释放
+            self._admission.release()
+        return True
+
+    def fail_reserved(self, task_id: str, error: str) -> None:
+        now = time.time()
+        with self._lock:
+            record = self._tasks.get(task_id)
+            if record is not None:
+                record.status = "failed"
+                record.error = error
+                record.finished_at = now
+        try:
+            self.store.mark_failed(task_id, error, now)
+        except Exception:
+            logger.exception("task.persist_failed")
+        self._admission.release()
 
     def get(self, task_id: str) -> Optional[TaskRecord]:
         with self._lock:
@@ -367,9 +447,9 @@ class ReviewTaskManager:
         for row in rows:
             if row["status"] not in ("queued", "processing"):
                 continue
-            if row["content"] is None:
+            if row["cleaned_text"] is None:
                 self._mark_failed(
-                    row["task_id"], "持久化记录缺少原始文件内容"
+                    row["task_id"], "持久化记录缺少清洗文本"
                 )
                 continue
             if row["status"] == "processing":
@@ -405,8 +485,7 @@ class ReviewTaskManager:
             self._executor.submit(
                 self._run,
                 row["task_id"],
-                row["filename"],
-                row["content"],
+                row["cleaned_text"],
             )
 
     def _mark_failed(self, task_id: str, error: str) -> None:
@@ -419,33 +498,27 @@ class ReviewTaskManager:
                 record.finished_at = now
         self.store.mark_failed(task_id, error, now)
 
-    def _run(
-        self, task_id: str, filename: str, content: bytes
-    ) -> None:
+    def _run(self, task_id: str, cleaned_text: str) -> None:
         now = time.time()
         with self._lock:
             record = self._tasks.get(task_id)
             if record is None:
-                self._admission.release()
+                # 排队期间被 cancel，名额已在 cancel 中释放
                 return
             record.status = "processing"
             record.started_at = now
         try:
             self.store.mark_processing(task_id, now)
-            suffix = filename.rsplit(".", 1)[-1].lower()
-            parser = self.parsers.get(suffix)
-            if parser is None:
-                raise ValueError(f"不支持的解析格式：{suffix}")
-            parsed = parser.parse(filename, content)
-            cleaned = clean_text(parsed)
             report = run_full_review(
-                cleaned,
-                extract_fields(cleaned),
+                cleaned_text,
+                extract_fields(cleaned_text),
                 llm_client=self.client,
                 run_id=task_id,
             )
             now = time.time()
             with self._lock:
+                if self._tasks.get(task_id) is not record:
+                    return
                 record.result = report
                 record.status = "done"
                 record.finished_at = now
@@ -458,6 +531,8 @@ class ReviewTaskManager:
             now = time.time()
             error = f"{type(exc).__name__}: {exc}"
             with self._lock:
+                if self._tasks.get(task_id) is not record:
+                    return
                 record.status = "failed"
                 record.error = error
                 record.finished_at = now

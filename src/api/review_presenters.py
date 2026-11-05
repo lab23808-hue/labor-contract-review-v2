@@ -64,7 +64,7 @@ def _base_context(
     *,
     mode: str,
     title: str,
-    task_id: str,
+    contract_id: str,
     filename: str,
     status_label: str,
     message: str = "",
@@ -74,7 +74,7 @@ def _base_context(
     return {
         "mode": mode,
         "title": title,
-        "task_id": task_id,
+        "contract_id": contract_id,
         "filename": filename,
         "status_label": status_label,
         "message": message,
@@ -97,12 +97,12 @@ def _base_context(
 
 
 def error_context(
-    task_id: str, title: str, message: str
+    contract_id: str, title: str, message: str
 ) -> dict[str, Any]:
     return _base_context(
         mode="error",
         title=title,
-        task_id=task_id,
+        contract_id=contract_id,
         filename="",
         status_label=title,
         message=message,
@@ -118,7 +118,7 @@ def status_context(record) -> dict[str, Any]:
     return _base_context(
         mode="status",
         title="劳动合同审查",
-        task_id=record.task_id,
+        contract_id=record.task_id,
         filename=record.filename,
         status_label=labels.get(record.status, "处理中"),
         message=messages.get(record.status, "正在处理。"),
@@ -130,7 +130,7 @@ def failed_context(record) -> dict[str, Any]:
     return _base_context(
         mode="error",
         title="劳动合同审查",
-        task_id=record.task_id,
+        contract_id=record.task_id,
         filename=record.filename,
         status_label="审查失败",
         message="审查过程中出现错误，未能完成本次审查。",
@@ -188,7 +188,7 @@ def report_context(record) -> dict[str, Any]:
     context = _base_context(
         mode="report",
         title="劳动合同审查报告",
-        task_id=record.task_id,
+        contract_id=record.task_id,
         filename=record.filename,
         status_label="审查完成",
     )

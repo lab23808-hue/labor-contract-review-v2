@@ -1,11 +1,12 @@
 import json
 import sqlite3
+import threading
 import time
 
 import pytest
 from fastapi.testclient import TestClient
 
-from api.review_app import create_review_app
+from app_factory import make_app
 from app.review_tasks import ReviewTaskManager, ReviewTaskStore
 from infra.docx_parser import DocxParser
 from infra.llm_client import FakeLLM
@@ -32,7 +33,7 @@ FAKE_RESPONSE = {
 
 
 def _app(store_path, **kwargs):
-    return create_review_app(
+    return make_app(
         client=FakeLLM(FAKE_RESPONSE),
         parsers={"txt": TxtParser(), "docx": DocxParser()},
         rate_limit=100,
@@ -48,7 +49,7 @@ def _upload(
     content_type="text/plain",
 ):
     return client.post(
-        "/upload", files={"file": (name, content, content_type)}
+        "/contracts", files={"file": (name, content, content_type)}
     )
 
 
@@ -68,7 +69,7 @@ def test_done_result_survives_restart(tmp_path):
     app = _app(database)
     with TestClient(app) as client:
         response = _upload(client)
-        task_id = response.json()["task_id"]
+        task_id = response.json()["contract_id"]
         before = _wait(client, task_id)["result"]
 
     app = _app(database)
@@ -85,7 +86,7 @@ def test_queued_task_recovers_and_completes(tmp_path):
     database = tmp_path / "tasks.sqlite"
     store = ReviewTaskStore(database)
     store.create_task(
-        "queued-1", "queued.txt", CONTRACT.encode(), time.time()
+        "queued-1", "queued.txt", CONTRACT, time.time()
     )
     store.close()
 
@@ -104,7 +105,7 @@ def test_expired_done_returns_410_and_is_deleted(tmp_path):
     )
     with TestClient(app) as client:
         response = _upload(client)
-        task_id = response.json()["task_id"]
+        task_id = response.json()["contract_id"]
         assert _wait(client, task_id)["status"] == "done"
 
         time.sleep(0.05)
@@ -113,7 +114,7 @@ def test_expired_done_returns_410_and_is_deleted(tmp_path):
 
         expired = client.get(f"/result/{task_id}")
         assert expired.status_code == 410
-        assert expired.json()["detail"] == "任务已过期"
+        assert expired.json()["detail"] == "合同审查已过期"
 
         assert manager.get(task_id) is None
         assert manager.store.get(task_id) is None
@@ -129,22 +130,22 @@ def test_expired_failed_cleaned_but_live_tasks_kept(tmp_path):
         response = _upload(
             client,
             name="broken.docx",
-            content=b"not a real docx",
+            content=b"PK\x03\x04not a real docx",
             content_type=(
                 "application/vnd.openxmlformats-officedocument."
                 "wordprocessingml.document"
             ),
         )
-        failed_id = response.json()["task_id"]
+        failed_id = response.json()["contract_id"]
         assert _wait(client, failed_id)["status"] == "failed"
 
         manager = app.state.review_manager
         old = time.time() - 100
         manager.store.create_task(
-            "queued-keep", "q.txt", CONTRACT.encode(), old
+            "queued-keep", "q.txt", CONTRACT, old
         )
         manager.store.create_task(
-            "processing-keep", "p.txt", CONTRACT.encode(), old
+            "processing-keep", "p.txt", CONTRACT, old
         )
         manager.store.mark_processing("processing-keep", old)
 
@@ -170,7 +171,7 @@ def test_processing_task_recovers_to_terminal_state(tmp_path):
     store.create_task(
         "processing-1",
         "processing.txt",
-        CONTRACT.encode(),
+        CONTRACT,
         time.time(),
     )
     store.mark_processing("processing-1", time.time())
@@ -188,10 +189,8 @@ def test_processing_task_recovers_to_terminal_state(tmp_path):
 def manager(tmp_path):
     review_manager = ReviewTaskManager(
         client=FakeLLM({"risks": [], "other_observations": []}),
-        parsers={"txt": TxtParser()},
         workers=1,
         queue_limit=2,
-        rate_limit=100,
         store_path=str(tmp_path / "submit.sqlite"),
         cleanup_interval=3600,
     )
@@ -208,7 +207,7 @@ def test_submit_releases_admission_when_store_fails(
     monkeypatch.setattr(manager.store, "create_task", boom)
     before = manager._admission._value
 
-    assert manager.submit("a.pdf", b"x") is None
+    assert manager.submit("a.pdf", "x") is None
     assert manager._admission._value == before
     assert len(manager._tasks) == 0
 
@@ -222,10 +221,10 @@ def test_submit_survives_repeated_store_failures(
     monkeypatch.setattr(manager.store, "create_task", boom)
     capacity = manager._admission._value
     for _ in range(capacity):
-        assert manager.submit("a.pdf", b"x") is None
+        assert manager.submit("a.pdf", "x") is None
 
     monkeypatch.undo()
-    task_id = manager.submit("b.pdf", b"x")
+    task_id = manager.submit("b.pdf", "x")
 
     assert task_id is not None
 
@@ -239,7 +238,52 @@ def test_submit_cleans_up_when_executor_fails(
     monkeypatch.setattr(manager._executor, "submit", boom)
     before = manager._admission._value
 
-    assert manager.submit("a.txt", b"x") is None
+    assert manager.submit("a.txt", "x") is None
     assert manager._admission._value == before
     assert len(manager._tasks) == 0
     assert manager.store.list_all() == []
+
+
+def test_cancel_queued_releases_admission(manager):
+    before = manager._admission._value
+    assert manager.reserve("c-queued") is True
+    assert manager._admission._value == before - 1
+
+    assert manager.cancel("c-queued") is True
+    assert manager._admission._value == before
+    assert manager.get("c-queued") is None
+    assert manager.store.get("c-queued") is None
+
+
+def test_cancel_processing_releases_exactly_once(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+
+    class BlockingLLM:
+        def call_llm(self, prompt):
+            started.set()
+            release.wait(timeout=5)
+            return {"risks": [], "other_observations": []}
+
+    review_manager = ReviewTaskManager(
+        client=BlockingLLM(),
+        workers=1,
+        queue_limit=2,
+        store_path=str(tmp_path / "cancel.sqlite"),
+        cleanup_interval=3600,
+    )
+    try:
+        capacity = review_manager._admission._value
+        assert review_manager.submit("c-running", CONTRACT) == "c-running"
+        assert started.wait(timeout=5)
+
+        assert review_manager.cancel("c-running") is True
+        release.set()
+
+        deadline = time.time() + 5
+        while review_manager._admission._value != capacity:
+            assert time.time() < deadline
+            time.sleep(0.01)
+        assert review_manager.get("c-running") is None
+    finally:
+        review_manager.close()

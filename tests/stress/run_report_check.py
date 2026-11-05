@@ -10,6 +10,7 @@ Usage:
 import html
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -20,9 +21,10 @@ if str(SRC) not in sys.path:
 
 from fastapi.testclient import TestClient
 
-from api.review_app import create_review_app
+from api.app import create_app
 from infra.llm_client import DeepSeekLLMClient
 from infra.rate_limiter import RequestThrottle
+from infra.sqlite_repository import SQLiteContractRepository
 
 CASES = [
     ("C-004（多风险）", ROOT / "tests/fixtures/realistic/C-004.txt"),
@@ -51,19 +53,22 @@ def main():
     client = DeepSeekLLMClient(
         throttle=RequestThrottle(rate=8, max_inflight=4)
     )
-    app = create_review_app(
-        client=client,
-        store_path=":memory:",
-        rate_limit=100,
+    app = create_app(
+        repository=SQLiteContractRepository(
+            tempfile.mkdtemp(prefix="report-check-")
+        ),
+        review_client=client,
+        review_store_path=":memory:",
+        review_rate_limit=100,
     )
     with TestClient(app) as http:
         for label, path in CASES:
             content = path.read_bytes()
             response = http.post(
-                "/upload",
+                "/contracts",
                 files={"file": (path.name, content, "text/plain")},
             )
-            task_id = response.json()["task_id"]
+            task_id = response.json()["contract_id"]
             body = _wait(http, task_id)
             page = http.get(f"/report/{task_id}")
             print(f"\n=== {label} / {task_id} / {body['status']} ===")

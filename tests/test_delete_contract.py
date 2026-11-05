@@ -11,7 +11,11 @@ TXT = b"delete me content"
 @pytest.fixture()
 def env(tmp_path):
     repository = SQLiteContractRepository(tmp_path)
-    app = create_app(repository=repository, parsers={})
+    app = create_app(
+        repository=repository,
+        parsers={},
+        review_store_path=tmp_path / "review_tasks.sqlite",
+    )
     with TestClient(app) as client:
         yield client, repository, tmp_path
 
@@ -35,6 +39,7 @@ def test_delete_contract_removes_row_and_directory(env):
     assert response.status_code == 204
     assert response.content == b""
     assert client.get(f"/contracts/{created['contract_id']}").status_code == 404
+    assert client.get(f"/result/{created['contract_id']}").status_code == 404
     assert repository.get(created["contract_id"]) is None
     assert not directory.exists()
 

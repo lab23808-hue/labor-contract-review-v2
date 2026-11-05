@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
+from infra.llm_client import FakeLLM
 from infra.sqlite_repository import SQLiteContractRepository
 from pdf_fixtures import make_valid_pdf
 
@@ -10,7 +11,14 @@ PDF = make_valid_pdf()
 
 @pytest.fixture()
 def client(tmp_path):
-    app = create_app(repository=SQLiteContractRepository(tmp_path), parsers={})
+    app = create_app(
+        repository=SQLiteContractRepository(tmp_path),
+        parsers={},
+        review_client=FakeLLM(
+            {"risks": [], "other_observations": []}
+        ),
+        review_store_path=str(tmp_path / "review.sqlite"),
+    )
     with TestClient(app) as http:
         yield http
 
@@ -30,7 +38,7 @@ def test_post_contract_returns_201_with_all_fields(client):
     assert body["file_format"] == "pdf"
     assert len(body["sha256"]) == 64
     assert body["size_bytes"] == len(PDF)
-    assert body["status"] == "uploaded"
+    assert body["status"] == "parsing"
     assert body["error"] is None
     assert body["contract_id"]
     assert body["created_at"]
@@ -69,7 +77,10 @@ def test_get_existing_and_missing_contract(client):
     response = client.get(f"/contracts/{created['contract_id']}")
 
     assert response.status_code == 200
-    assert response.json() == created
+    body = response.json()
+    assert body["contract_id"] == created["contract_id"]
+    assert body["filename"] == created["filename"]
+    assert body["status"] in ("uploaded", "parsed", "failed")
     assert client.get("/contracts/does-not-exist").status_code == 404
 
 
@@ -101,10 +112,29 @@ def test_list_pagination_and_invalid_params(client):
 
 
 def test_restart_keeps_contracts_visible(tmp_path):
-    with TestClient(create_app(repository=SQLiteContractRepository(tmp_path))) as first:
+    review_store = str(tmp_path / "review.sqlite")
+    with TestClient(
+        create_app(
+            repository=SQLiteContractRepository(tmp_path),
+            parsers={},
+            review_client=FakeLLM(
+                {"risks": [], "other_observations": []}
+            ),
+            review_store_path=review_store,
+        )
+    ) as first:
         created = _post_pdf(first).json()
 
-    with TestClient(create_app(repository=SQLiteContractRepository(tmp_path))) as reopened:
+    with TestClient(
+        create_app(
+            repository=SQLiteContractRepository(tmp_path),
+            parsers={},
+            review_client=FakeLLM(
+                {"risks": [], "other_observations": []}
+            ),
+            review_store_path=review_store,
+        )
+    ) as reopened:
         assert reopened.get(f"/contracts/{created['contract_id']}").status_code == 200
         listed = reopened.get("/contracts").json()
         assert [item["contract_id"] for item in listed] == [created["contract_id"]]

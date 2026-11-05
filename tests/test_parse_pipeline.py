@@ -13,6 +13,7 @@ from api.app import create_app
 from app.contract_manager import ContractManager, run_parse_task
 from domain.ports import ParsingError
 from fakes import InMemoryContractRepository
+from infra.llm_client import FakeLLM
 from infra.sqlite_repository import SQLiteContractRepository
 from infra.txt_parser import TxtParser
 
@@ -32,7 +33,12 @@ class ScriptedParser:
 @pytest.fixture()
 def parse_client(tmp_path):
     parsers = {"txt": TxtParser()}
-    app = create_app(repository=SQLiteContractRepository(tmp_path), parsers=parsers)
+    app = create_app(
+        repository=SQLiteContractRepository(tmp_path),
+        parsers=parsers,
+        review_client=FakeLLM({"risks": [], "other_observations": []}),
+        review_store_path=tmp_path / "review_tasks.sqlite",
+    )
     with TestClient(app) as client:
         yield client, tmp_path
 
@@ -60,10 +66,6 @@ def test_parse_txt_produces_artifacts(parse_client):
     client, tmp_path = parse_client
     created = _upload(client)
 
-    response = client.post(f"/contracts/{created['contract_id']}/parse")
-
-    assert response.status_code == 202
-    assert response.json()["status"] == "parsing"
     body = _wait_for_final(client, created["contract_id"])
     assert body["status"] == "parsed"
     assert body["error"] is None
@@ -89,9 +91,10 @@ def test_parse_txt_produces_artifacts(parse_client):
     assert cleaned_download.headers["content-type"].startswith("text/plain")
     assert cleaned_download.content == cleaned_file.read_bytes()
 
-    pending = _upload(client, "pending.txt", b"not parsed yet")
-    assert client.get(f"/contracts/{pending['contract_id']}/parsed").status_code == 409
-    assert client.get(f"/contracts/{pending['contract_id']}/cleaned").status_code == 409
+    failed = _upload(client, "pending.docx", b"PK\x03\x04pending")
+    assert _wait_for_final(client, failed["contract_id"])["status"] == "failed"
+    assert client.get(f"/contracts/{failed['contract_id']}/parsed").status_code == 409
+    assert client.get(f"/contracts/{failed['contract_id']}/cleaned").status_code == 409
 
     cleaned_file.unlink()
     missing = client.get(f"/contracts/{created['contract_id']}/cleaned")

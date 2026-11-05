@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 
 from api.app import create_app
+from app.contract_manager import ContractManager
 from core.contract import Contract
 from domain.ports import DuplicateContractError
+from infra.llm_client import FakeLLM
 from infra.sqlite_repository import SQLiteContractRepository
 
 TXT = b"same content"
@@ -64,7 +66,14 @@ def test_concurrent_save_allows_exactly_one(tmp_path):
 
 
 def test_concurrent_upload_api_returns_201_and_409(tmp_path):
-    app = create_app(repository=SQLiteContractRepository(tmp_path), parsers={})
+    app = create_app(
+        repository=SQLiteContractRepository(tmp_path),
+        parsers={},
+        review_client=FakeLLM(
+            {"risks": [], "other_observations": []}
+        ),
+        review_store_path=str(tmp_path / "review.sqlite"),
+    )
     with TestClient(app) as client:
         barrier = threading.Barrier(2)
 
@@ -87,17 +96,23 @@ def test_concurrent_upload_api_returns_201_and_409(tmp_path):
 def test_concurrent_parse_api_returns_202_and_409(tmp_path):
     parser = BlockingParser()
     app = create_app(
-        repository=SQLiteContractRepository(tmp_path), parsers={"txt": parser}
+        repository=SQLiteContractRepository(tmp_path),
+        parsers={"txt": parser},
+        review_client=FakeLLM(
+            {"risks": [], "other_observations": []}
+        ),
+        review_store_path=str(tmp_path / "review.sqlite"),
     )
     with TestClient(app) as client:
-        created = client.post(
-            "/contracts", files={"file": ("race.txt", TXT, "text/plain")}
-        ).json()
+        manager = ContractManager(
+            app.state.contract_repository, app.state.parsers
+        )
+        created = manager.upload("race.txt", TXT)
         barrier = threading.Barrier(2)
 
         def parse():
             barrier.wait()
-            return client.post(f"/contracts/{created['contract_id']}/parse")
+            return client.post(f"/contracts/{created.contract_id}/parse")
 
         with ThreadPoolExecutor(max_workers=2) as pool:
             futures = [pool.submit(parse) for _ in range(2)]

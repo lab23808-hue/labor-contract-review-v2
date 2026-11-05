@@ -1,48 +1,32 @@
-import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Mapping, Optional
+from dataclasses import fields
+from typing import AsyncIterator, Optional
 
 from fastapi import FastAPI
 
+from api.container import AppContainer, build_container
 from api.errors import register_exception_handlers
-from api.routes import contracts
-from domain.ports import ContractRepository, DocumentParser, DocumentValidator
-from infra.docx_parser import DocxParser
-from infra.mineru_parser import MinerUParser
-from infra.pdf_validator import PdfValidator
-from infra.sqlite_repository import SQLiteContractRepository
-from infra.txt_parser import TxtParser
-
-
-def build_parsers() -> dict[str, DocumentParser]:
-    mineru = MinerUParser()
-    return {
-        "txt": TxtParser(),
-        "docx": DocxParser(),
-        "pdf": mineru,
-        "jpg": mineru,
-        "png": mineru,
-    }
+from api.routes import contracts, review
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.contract_repository.reset_parsing_to_failed()
     yield
+    app.state.review_manager.close()
 
 
 def create_app(
-    repository: Optional[ContractRepository] = None,
-    parsers: Optional[Mapping[str, DocumentParser]] = None,
-    validator: Optional[DocumentValidator] = None,
+    container: Optional[AppContainer] = None,
+    **overrides,
 ) -> FastAPI:
     app = FastAPI(title="Labor Contract Review", lifespan=_lifespan)
-    app.state.contract_repository = (
-        repository if repository is not None else SQLiteContractRepository()
+    container = (
+        container if container is not None else build_container(**overrides)
     )
-    app.state.parsers = parsers if parsers is not None else build_parsers()
-    app.state.validator = validator if validator is not None else PdfValidator()
-    app.state.parse_semaphore = asyncio.Semaphore(1)
+    for field in fields(container):
+        setattr(app.state, field.name, getattr(container, field.name))
     register_exception_handlers(app)
     app.include_router(contracts.router)
+    app.include_router(review.router)
     return app

@@ -20,9 +20,10 @@ if str(SRC) not in sys.path:
 
 from fastapi.testclient import TestClient
 
-from api.review_app import create_review_app
+from api.app import create_app
 from infra.llm_client import DeepSeekLLMClient
 from infra.rate_limiter import RequestThrottle
+from infra.sqlite_repository import SQLiteContractRepository
 
 CORPUS = ROOT / "tests" / "corpus_gen" / "generated"
 FILE = "G-04.txt"
@@ -46,18 +47,20 @@ def main():
 
     with tempfile.TemporaryDirectory(prefix="m16_restart_") as temp:
         database = Path(temp) / "tasks.sqlite"
+        data_dir = Path(temp) / "contracts"
 
-        app = create_review_app(
-            client=client,
-            store_path=str(database),
-            rate_limit=100,
+        app = create_app(
+            repository=SQLiteContractRepository(data_dir),
+            review_client=client,
+            review_store_path=str(database),
+            review_rate_limit=100,
         )
         with TestClient(app) as http:
             response = http.post(
-                "/upload",
+                "/contracts",
                 files={"file": (FILE, content, "text/plain")},
             )
-            task_id = response.json()["task_id"]
+            task_id = response.json()["contract_id"]
             before = _wait(http, task_id)
             print("before restart:", json.dumps(
                 {
@@ -72,16 +75,17 @@ def main():
                 ensure_ascii=False,
             ))
 
-        app = create_review_app(
-            client=client,
-            store_path=str(database),
-            rate_limit=100,
+        app = create_app(
+            repository=SQLiteContractRepository(data_dir),
+            review_client=client,
+            review_store_path=str(database),
+            review_rate_limit=100,
         )
         with TestClient(app) as http:
             after = http.get(f"/result/{task_id}").json()
             print("after restart: ", json.dumps(
                 {
-                    "task_id": after["task_id"],
+                    "task_id": after["contract_id"],
                     "status": after["status"],
                     "risk_types": [
                         risk["risk_type"]

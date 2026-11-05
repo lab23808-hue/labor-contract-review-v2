@@ -1,5 +1,8 @@
 # M15 上传接口与双层有界队列（含 M16 持久化）
 
+> 后续重构说明：`POST /upload` 已移除，上传统一收敛到 `POST /contracts`
+> （校验 → 解析 → 清洗 → 审查排队）；本文件保留为 M15 当时的设计记录。
+
 - 日期：2026-11-03
 - 新入口：`src/api/review_app.py`（独立于既有合同存储/解析 app）
 - 任务层：`src/app/review_tasks.py`（内存队列 + SQLite 事实记录）

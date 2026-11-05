@@ -10,6 +10,7 @@ Usage:
 
 import json
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -21,26 +22,30 @@ if str(SRC) not in sys.path:
 
 from fastapi.testclient import TestClient
 
-from api.review_app import create_review_app
+from api.app import create_app
+from infra.sqlite_repository import SQLiteContractRepository
 
 CORPUS = Path(__file__).resolve().parents[1] / "corpus_gen" / "generated"
 FILES = [f"G-{index:02d}.txt" for index in range(1, 9)]
 
 
 def main():
-    app = create_review_app(
-        workers=4,
-        max_inflight=4,
-        rps=8,
-        queue_limit=50,
-        rate_limit=100,
-        store_path=":memory:",
+    app = create_app(
+        repository=SQLiteContractRepository(
+            tempfile.mkdtemp(prefix="api-stats-")
+        ),
+        review_workers=4,
+        review_max_inflight=4,
+        review_rps=8,
+        review_queue_limit=50,
+        review_rate_limit=100,
+        review_store_path=":memory:",
     )
     with TestClient(app) as client:
         def upload(name):
             content = (CORPUS / name).read_bytes()
             return client.post(
-                "/upload",
+                "/contracts",
                 files={"file": (name, content, "text/plain")},
             )
 
@@ -49,8 +54,8 @@ def main():
 
         task_ids = []
         for response in responses:
-            assert response.status_code == 202, response.text
-            task_ids.append(response.json()["task_id"])
+            assert response.status_code == 201, response.text
+            task_ids.append(response.json()["contract_id"])
 
         print("uploads:", [response.status_code for response in responses])
         print(

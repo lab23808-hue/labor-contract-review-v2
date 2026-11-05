@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
-from api.review_app import create_review_app
+from app_factory import make_app
 from app.review import run_full_review
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields
@@ -46,7 +46,7 @@ class BlockingLLM:
 
 def _app(**kwargs):
     kwargs.setdefault("store_path", ":memory:")
-    return create_review_app(
+    return make_app(
         client=FakeLLM(FAKE_RESPONSE),
         parsers={"txt": TxtParser(), "docx": DocxParser()},
         **kwargs,
@@ -60,7 +60,7 @@ def _upload(
     content_type="text/plain",
 ):
     return client.post(
-        "/upload", files={"file": (name, content, content_type)}
+        "/contracts", files={"file": (name, content, content_type)}
     )
 
 
@@ -79,15 +79,18 @@ def test_concurrent_same_ip_rate_limited_to_five():
     with TestClient(app) as client:
         barrier = threading.Barrier(10)
 
-        def post():
+        def post(index):
             barrier.wait()
-            return _upload(client)
+            return _upload(
+                client,
+                content=(CONTRACT + f"\n第{index}份").encode(),
+            )
 
         with ThreadPoolExecutor(max_workers=10) as pool:
-            responses = list(pool.map(lambda _: post(), range(10)))
+            responses = list(pool.map(post, range(10)))
 
     codes = [response.status_code for response in responses]
-    assert codes.count(202) == 5
+    assert codes.count(201) == 5
     assert codes.count(429) == 5
     for response in responses:
         if response.status_code == 429:
@@ -97,7 +100,7 @@ def test_concurrent_same_ip_rate_limited_to_five():
 
 def test_queue_full_returns_503_and_does_not_enqueue():
     blocking = BlockingLLM()
-    app = create_review_app(
+    app = make_app(
         client=blocking,
         parsers={"txt": TxtParser()},
         workers=1,
@@ -107,8 +110,8 @@ def test_queue_full_returns_503_and_does_not_enqueue():
     )
     with TestClient(app) as client:
         first = _upload(client)
-        assert first.status_code == 202
-        task_id = first.json()["task_id"]
+        assert first.status_code == 201
+        task_id = first.json()["contract_id"]
         assert blocking.started.wait(timeout=5)
 
         second = _upload(client)
@@ -131,7 +134,7 @@ def test_rejects_invalid_extension_and_oversize():
     app = _app()
     with TestClient(app) as client:
         invalid = _upload(client, name="malware.exe", content=b"x")
-        assert invalid.status_code == 400
+        assert invalid.status_code == 422
         assert ".exe" in invalid.json()["detail"]
 
         oversized = _upload(
@@ -139,7 +142,7 @@ def test_rejects_invalid_extension_and_oversize():
             name="big.txt",
             content=b"x" * (2 * 1024 * 1024 + 1),
         )
-        assert oversized.status_code == 400
+        assert oversized.status_code == 422
         assert "上限" in oversized.json()["detail"]
 
 
@@ -147,8 +150,8 @@ def test_upload_result_matches_single_run():
     app = _app()
     with TestClient(app) as client:
         response = _upload(client)
-        assert response.status_code == 202
-        task_id = response.json()["task_id"]
+        assert response.status_code == 201
+        task_id = response.json()["contract_id"]
         body = _wait(client, task_id)
         assert body["status"] == "done"
 
@@ -168,7 +171,7 @@ def test_upload_result_matches_single_run():
 
 
 def test_failed_item_does_not_stop_other_tasks():
-    app = create_review_app(
+    app = make_app(
         client=FakeLLM(FAKE_RESPONSE),
         parsers={"txt": TxtParser(), "docx": DocxParser()},
         workers=2,
@@ -181,22 +184,25 @@ def test_failed_item_does_not_stop_other_tasks():
         bad = _upload(
             client,
             name="broken.docx",
-            content=b"not a real docx",
+            content=b"PK\x03\x04not a real docx",
             content_type=(
                 "application/vnd.openxmlformats-officedocument."
                 "wordprocessingml.document"
             ),
         )
 
-        good_body = _wait(client, good.json()["task_id"])
-        bad_body = _wait(client, bad.json()["task_id"])
+        good_body = _wait(client, good.json()["contract_id"])
+        bad_body = _wait(client, bad.json()["contract_id"])
 
         assert good_body["status"] == "done"
         assert bad_body["status"] == "failed"
         assert "docx" in bad_body["error"].lower()
 
-        third = _upload(client)
-        assert _wait(client, third.json()["task_id"])["status"] == "done"
+        third = _upload(
+            client,
+            content=(CONTRACT + "\n第三份合同").encode(),
+        )
+        assert _wait(client, third.json()["contract_id"])["status"] == "done"
 
         stats = client.get("/stats").json()
         assert stats["processed"] == 2

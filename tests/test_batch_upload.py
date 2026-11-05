@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from api.app import create_app
 from config import settings
+from infra.llm_client import FakeLLM
 from infra.sqlite_repository import SQLiteContractRepository
 from infra.txt_parser import TxtParser
 
@@ -15,7 +16,12 @@ DUP_CONTENT = b"duplicate batch content"
 @pytest.fixture()
 def client(tmp_path):
     app = create_app(
-        repository=SQLiteContractRepository(tmp_path), parsers={"txt": TxtParser()}
+        repository=SQLiteContractRepository(tmp_path),
+        parsers={"txt": TxtParser()},
+        review_client=FakeLLM(
+            {"risks": [], "other_observations": []}
+        ),
+        review_store_path=str(tmp_path / "review.sqlite"),
     )
     with TestClient(app) as http:
         yield http
@@ -79,7 +85,12 @@ def test_batch_rejects_total_size_over_limit(client, monkeypatch):
 def test_concurrent_batch_and_single_upload_race(tmp_path):
     content = b"race batch content"
     app = create_app(
-        repository=SQLiteContractRepository(tmp_path), parsers={"txt": TxtParser()}
+        repository=SQLiteContractRepository(tmp_path),
+        parsers={"txt": TxtParser()},
+        review_client=FakeLLM(
+            {"risks": [], "other_observations": []}
+        ),
+        review_store_path=str(tmp_path / "review.sqlite"),
     )
     with TestClient(app) as http:
         barrier = threading.Barrier(2)

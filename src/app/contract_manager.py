@@ -43,7 +43,12 @@ class ContractManager:
         self._parsers = parsers
         self._validator = validator
 
-    def upload(self, filename: str, content: bytes) -> Contract:
+    def upload(
+        self,
+        filename: str,
+        content: bytes,
+        contract_id: Optional[str] = None,
+    ) -> Contract:
         file_format = validate_upload(filename, content, self._validator)
 
         sha256 = hashlib.sha256(content).hexdigest()
@@ -54,7 +59,7 @@ class ContractManager:
             )
 
         contract = Contract(
-            contract_id=uuid.uuid4().hex,
+            contract_id=contract_id or uuid.uuid4().hex,
             filename=filename,
             file_format=file_format,
             sha256=sha256,
@@ -183,7 +188,36 @@ class ContractManager:
 
 
 async def run_parse_task(
-    manager: ContractManager, contract_id: str, semaphore: asyncio.Semaphore
+    manager: ContractManager,
+    contract_id: str,
+    semaphore: asyncio.Semaphore,
+    review_manager=None,
 ) -> None:
     async with semaphore:
-        await asyncio.to_thread(manager.execute_parse, contract_id)
+        try:
+            contract = await asyncio.to_thread(
+                manager.execute_parse, contract_id
+            )
+        except Exception as exc:
+            if review_manager is not None:
+                review_manager.fail_reserved(
+                    contract_id, f"{type(exc).__name__}: {exc}"
+                )
+            raise
+
+    if review_manager is None:
+        return
+    if contract.status != "parsed":
+        review_manager.fail_reserved(
+            contract_id, contract.error or "解析失败"
+        )
+        return
+    try:
+        _, cleaned_bytes = manager.cleaned_artifact(contract_id)
+        cleaned_text = cleaned_bytes.decode("utf-8")
+    except Exception as exc:
+        review_manager.fail_reserved(
+            contract_id, f"{type(exc).__name__}: {exc}"
+        )
+        return
+    review_manager.submit_reserved(contract_id, cleaned_text)

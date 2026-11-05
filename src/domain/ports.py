@@ -28,6 +28,10 @@ class DocumentValidator(Protocol):
     def validate_pdf(self, content: bytes) -> None: ...
 
 
+class RateLimiter(Protocol):
+    def check(self, key: str) -> tuple[bool, int, int]: ...
+
+
 @dataclass(frozen=True)
 class StoredArtifacts:
     parsed_path: str
