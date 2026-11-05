@@ -201,7 +201,7 @@ def test_expired_and_missing_report_pages():
         assert _wait(client, contract_id)["status"] == "done"
 
         time.sleep(0.05)
-        manager = app.state.review_manager
+        manager = app.state.review_queue
         assert manager.cleanup_expired() == 1
 
         expired = client.get(f"/report/{contract_id}")

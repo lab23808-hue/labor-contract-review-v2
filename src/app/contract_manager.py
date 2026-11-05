@@ -199,7 +199,7 @@ async def run_parse_task(
     manager: ContractManager,
     contract_id: str,
     semaphore: asyncio.Semaphore,
-    review_manager=None,
+    review_service=None,
 ) -> None:
     async with semaphore:
         try:
@@ -207,16 +207,16 @@ async def run_parse_task(
                 manager.execute_parse, contract_id
             )
         except Exception as exc:
-            if review_manager is not None:
-                review_manager.fail_reserved(
+            if review_service is not None:
+                review_service.fail_reserved(
                     contract_id, f"{type(exc).__name__}: {exc}"
                 )
             raise
 
-    if review_manager is None:
+    if review_service is None:
         return
     if contract.status != "parsed":
-        review_manager.fail_reserved(
+        review_service.fail_reserved(
             contract_id, contract.error or "解析失败"
         )
         return
@@ -224,8 +224,8 @@ async def run_parse_task(
         _, cleaned_bytes = manager.cleaned_artifact(contract_id)
         cleaned_text = cleaned_bytes.decode("utf-8")
     except Exception as exc:
-        review_manager.fail_reserved(
+        review_service.fail_reserved(
             contract_id, f"{type(exc).__name__}: {exc}"
         )
         return
-    review_manager.submit_reserved(contract_id, cleaned_text)
+    review_service.submit_reserved(contract_id, cleaned_text)

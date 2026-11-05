@@ -19,11 +19,11 @@ from pydantic import BaseModel
 from api.dependencies import (
     get_contract_manager,
     get_parse_semaphore,
-    get_review_manager,
+    get_review_service,
     get_review_rate_limiter,
 )
 from app.contract_manager import ContractManager, run_parse_task
-from app.review_tasks import ReviewTaskManager
+from app.review_service import ReviewService
 from config import settings
 from core.contract import Contract
 from core.errors import ValidationError
@@ -66,8 +66,8 @@ async def upload_contract(
     background_tasks: BackgroundTasks,
     file: Annotated[UploadFile, File(...)],
     manager: Annotated[ContractManager, Depends(get_contract_manager)],
-    review_manager: Annotated[
-        ReviewTaskManager, Depends(get_review_manager)
+    review_service: Annotated[
+        ReviewService, Depends(get_review_service)
     ],
     rate_limiter: Annotated[
         RateLimiter, Depends(get_review_rate_limiter)
@@ -90,7 +90,7 @@ async def upload_contract(
 
     contract_id = uuid.uuid4().hex
     filename = file.filename or ""
-    if not review_manager.reserve(contract_id, filename):
+    if not review_service.reserve(contract_id, filename):
         raise HTTPException(
             status_code=503,
             detail="系统忙",
@@ -100,7 +100,7 @@ async def upload_contract(
         manager.upload(filename, content, contract_id=contract_id)
         contract = manager.start_parse(contract_id)
     except Exception:
-        review_manager.release_reservation(contract_id)
+        review_service.release_reservation(contract_id)
         raise
 
     background_tasks.add_task(
@@ -108,7 +108,7 @@ async def upload_contract(
         manager,
         contract_id,
         semaphore,
-        review_manager,
+        review_service,
     )
     return contract
 
@@ -120,8 +120,8 @@ async def upload_batch(
     files: Annotated[list[UploadFile], File(...)],
     background_tasks: BackgroundTasks,
     manager: Annotated[ContractManager, Depends(get_contract_manager)],
-    review_manager: Annotated[
-        ReviewTaskManager, Depends(get_review_manager)
+    review_service: Annotated[
+        ReviewService, Depends(get_review_service)
     ],
     rate_limiter: Annotated[
         RateLimiter, Depends(get_review_rate_limiter)
@@ -165,7 +165,7 @@ async def upload_batch(
         detail = item.detail
         if item.status == 201:
             contract_id = item.contract_id
-            if not review_manager.reserve(contract_id, item.filename):
+            if not review_service.reserve(contract_id, item.filename):
                 manager.delete(contract_id)
                 items.append(
                     BatchItemResponse(
@@ -182,7 +182,7 @@ async def upload_batch(
                 manager,
                 contract_id,
                 semaphore,
-                review_manager,
+                review_service,
             )
             detail = "uploaded, parse scheduled"
             succeeded += 1
@@ -250,12 +250,12 @@ def parse_contract(
 def delete_contract(
     contract_id: str,
     manager: Annotated[ContractManager, Depends(get_contract_manager)],
-    review_manager: Annotated[
-        ReviewTaskManager, Depends(get_review_manager)
+    review_service: Annotated[
+        ReviewService, Depends(get_review_service)
     ],
 ) -> Response:
     manager.delete(contract_id)
-    review_manager.cancel(contract_id)
+    review_service.cancel(contract_id)
     return Response(status_code=204)
 
 

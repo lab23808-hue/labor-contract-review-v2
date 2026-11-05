@@ -7,7 +7,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app_factory import make_app
-from app.review_tasks import ReviewTaskManager, ReviewTaskStore
+from app.review_queue import ReviewQueue
+from fakes import FakeReviewTaskRepository
+from infra.review_store import ReviewTaskStore
 from infra.docx_parser import DocxParser
 from infra.llm_client import FakeLLM
 from infra.txt_parser import TxtParser
@@ -85,7 +87,7 @@ def test_done_result_survives_restart(tmp_path):
 def test_queued_task_recovers_and_completes(tmp_path):
     database = tmp_path / "tasks.sqlite"
     store = ReviewTaskStore(database)
-    store.create_task(
+    store.create(
         "queued-1", "queued.txt", CONTRACT, time.time()
     )
     store.close()
@@ -109,7 +111,7 @@ def test_expired_done_returns_410_and_is_deleted(tmp_path):
         assert _wait(client, task_id)["status"] == "done"
 
         time.sleep(0.05)
-        manager = app.state.review_manager
+        manager = app.state.review_queue
         assert manager.cleanup_expired() == 1
 
         expired = client.get(f"/result/{task_id}")
@@ -139,12 +141,12 @@ def test_expired_failed_cleaned_but_live_tasks_kept(tmp_path):
         failed_id = response.json()["contract_id"]
         assert _wait(client, failed_id)["status"] == "failed"
 
-        manager = app.state.review_manager
+        manager = app.state.review_queue
         old = time.time() - 100
-        manager.store.create_task(
+        manager.store.create(
             "queued-keep", "q.txt", CONTRACT, old
         )
-        manager.store.create_task(
+        manager.store.create(
             "processing-keep", "p.txt", CONTRACT, old
         )
         manager.store.mark_processing("processing-keep", old)
@@ -158,17 +160,17 @@ def test_expired_failed_cleaned_but_live_tasks_kept(tmp_path):
 
         queued = manager.store.get("queued-keep")
         processing = manager.store.get("processing-keep")
-        assert queued is not None and queued["status"] == "queued"
+        assert queued is not None and queued.status == "queued"
         assert (
             processing is not None
-            and processing["status"] == "processing"
+            and processing.status == "processing"
         )
 
 
 def test_processing_task_recovers_to_terminal_state(tmp_path):
     database = tmp_path / "tasks.sqlite"
     store = ReviewTaskStore(database)
-    store.create_task(
+    store.create(
         "processing-1",
         "processing.txt",
         CONTRACT,
@@ -187,17 +189,17 @@ def test_processing_task_recovers_to_terminal_state(tmp_path):
 
 @pytest.fixture()
 def manager(tmp_path):
-    review_manager = ReviewTaskManager(
-        client=FakeLLM({"risks": [], "other_observations": []}),
+    queue = ReviewQueue(
+        FakeLLM({"risks": [], "other_observations": []}),
+        ReviewTaskStore(str(tmp_path / "submit.sqlite")),
         workers=1,
         max_inflight=1,
         queue_limit=2,
-        store_path=str(tmp_path / "submit.sqlite"),
         ttl_seconds=86400,
         cleanup_interval=3600,
     )
-    yield review_manager
-    review_manager.close()
+    yield queue
+    queue.close()
 
 
 def test_submit_releases_admission_when_store_fails(
@@ -206,7 +208,7 @@ def test_submit_releases_admission_when_store_fails(
     def boom(*args, **kwargs):
         raise sqlite3.OperationalError("db locked")
 
-    monkeypatch.setattr(manager.store, "create_task", boom)
+    monkeypatch.setattr(manager.store, "create", boom)
     before = manager._admission._value
 
     assert manager.submit("a.pdf", "x") is None
@@ -220,7 +222,7 @@ def test_submit_survives_repeated_store_failures(
     def boom(*args, **kwargs):
         raise sqlite3.OperationalError("db locked")
 
-    monkeypatch.setattr(manager.store, "create_task", boom)
+    monkeypatch.setattr(manager.store, "create", boom)
     capacity = manager._admission._value
     for _ in range(capacity):
         assert manager.submit("a.pdf", "x") is None
@@ -267,27 +269,57 @@ def test_cancel_processing_releases_exactly_once(tmp_path):
             release.wait(timeout=5)
             return {"risks": [], "other_observations": []}
 
-    review_manager = ReviewTaskManager(
-        client=BlockingLLM(),
+    queue = ReviewQueue(
+        BlockingLLM(),
+        ReviewTaskStore(str(tmp_path / "cancel.sqlite")),
         workers=1,
         max_inflight=1,
         queue_limit=2,
-        store_path=str(tmp_path / "cancel.sqlite"),
         ttl_seconds=86400,
         cleanup_interval=3600,
     )
     try:
-        capacity = review_manager._admission._value
-        assert review_manager.submit("c-running", CONTRACT) == "c-running"
+        capacity = queue._admission._value
+        assert queue.submit("c-running", CONTRACT) == "c-running"
         assert started.wait(timeout=5)
 
-        assert review_manager.cancel("c-running") is True
+        assert queue.cancel("c-running") is True
         release.set()
 
         deadline = time.time() + 5
-        while review_manager._admission._value != capacity:
+        while queue._admission._value != capacity:
             assert time.time() < deadline
             time.sleep(0.01)
-        assert review_manager.get("c-running") is None
+        assert queue.get("c-running") is None
     finally:
-        review_manager.close()
+        queue.close()
+
+
+def test_queue_runs_against_port_store():
+    store = FakeReviewTaskRepository()
+    queue = ReviewQueue(
+        FakeLLM({"risks": [], "other_observations": []}),
+        store,
+        workers=1,
+        max_inflight=1,
+        queue_limit=1,
+        ttl_seconds=86400,
+        cleanup_interval=3600,
+    )
+    try:
+        assert queue.reserve("contract-1", "c.txt") is True
+        assert queue.submit_reserved("contract-1", CONTRACT) is True
+
+        deadline = time.time() + 5
+        stored = None
+        while time.time() < deadline:
+            stored = store.get("contract-1")
+            if stored is not None and stored.status == "done":
+                break
+            time.sleep(0.01)
+
+        assert stored is not None
+        assert stored.status == "done"
+        assert stored.result["meta"]["run_id"] == "contract-1"
+    finally:
+        queue.close()

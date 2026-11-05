@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from app.contract_manager import ContractManager
-from app.review_tasks import ReviewTaskManager
+from app.review_queue import ReviewQueue
+from app.review_service import ReviewService
 from config import settings
 from domain.ports import (
     ContractRepository,
@@ -18,6 +19,7 @@ from infra.llm_client import DeepSeekLLMClient
 from infra.mineru_parser import MinerUParser
 from infra.pdf_validator import PdfValidator
 from infra.rate_limiter import RequestThrottle, SlidingWindowRateLimiter
+from infra.review_store import ReviewTaskStore
 from infra.sqlite_repository import SQLiteContractRepository
 from infra.txt_parser import TxtParser
 
@@ -39,7 +41,8 @@ class AppContainer:
     parsers: Mapping[str, DocumentParser]
     validator: DocumentValidator
     contract_manager: ContractManager
-    review_manager: ReviewTaskManager
+    review_queue: ReviewQueue
+    review_service: ReviewService
     review_rate_limiter: RateLimiter
     parse_semaphore: asyncio.Semaphore
 
@@ -115,12 +118,12 @@ def build_container(
             )
         )
 
-    review_manager = ReviewTaskManager(
+    review_queue = ReviewQueue(
         review_client,
+        ReviewTaskStore(store_path),
         workers=workers,
         max_inflight=max_inflight,
         queue_limit=queue_limit,
-        store_path=store_path,
         ttl_seconds=ttl_seconds,
         cleanup_interval=cleanup_interval,
     )
@@ -137,7 +140,8 @@ def build_container(
                 max_upload_bytes=settings.MAX_UPLOAD_BYTES,
             ),
         ),
-        review_manager=review_manager,
+        review_queue=review_queue,
+        review_service=ReviewService(review_queue),
         review_rate_limiter=SlidingWindowRateLimiter(
             rate_limit, rate_window
         ),

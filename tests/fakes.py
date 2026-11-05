@@ -1,3 +1,4 @@
+import dataclasses
 from typing import Optional
 
 from core.contract import Contract
@@ -6,6 +7,7 @@ from core.errors import (
     ContractNotFoundError,
     InvalidStateError,
 )
+from core.review_task import ReviewTask
 from domain.ports import DuplicateContractError, StoredArtifacts
 
 
@@ -105,3 +107,106 @@ class InMemoryContractRepository:
                 )
                 count += 1
         return count
+
+
+class FakeReviewTaskRepository:
+    path = ":memory:"
+
+    def __init__(self) -> None:
+        self._tasks: dict[str, ReviewTask] = {}
+        self._expired: set[str] = set()
+
+    def create(
+        self,
+        contract_id: str,
+        filename: str,
+        cleaned_text: Optional[str],
+        now: float,
+    ) -> None:
+        self._tasks[contract_id] = ReviewTask(
+            contract_id=contract_id,
+            filename=filename,
+            status="queued",
+            result=None,
+            error=None,
+            cleaned_text=cleaned_text,
+            created_at=now,
+            updated_at=now,
+        )
+
+    def set_cleaned_text(
+        self, contract_id: str, cleaned_text: str, now: float
+    ) -> None:
+        self._replace(
+            contract_id,
+            status="queued",
+            cleaned_text=cleaned_text,
+            updated_at=now,
+        )
+
+    def mark_processing(self, contract_id: str, now: float) -> None:
+        self._replace(contract_id, status="processing", updated_at=now)
+
+    def mark_queued(self, contract_id: str, now: float) -> None:
+        self._replace(contract_id, status="queued", updated_at=now)
+
+    def mark_done(
+        self, contract_id: str, result: dict, now: float
+    ) -> None:
+        self._replace(
+            contract_id,
+            status="done",
+            result=result,
+            error=None,
+            cleaned_text=None,
+            updated_at=now,
+        )
+
+    def mark_failed(
+        self, contract_id: str, error: str, now: float
+    ) -> None:
+        self._replace(
+            contract_id,
+            status="failed",
+            result=None,
+            error=error,
+            cleaned_text=None,
+            updated_at=now,
+        )
+
+    def delete(self, contract_id: str) -> None:
+        self._tasks.pop(contract_id, None)
+
+    def get(self, contract_id: str) -> Optional[ReviewTask]:
+        return self._tasks.get(contract_id)
+
+    def list_all(self) -> list[ReviewTask]:
+        return sorted(
+            self._tasks.values(), key=lambda task: task.created_at
+        )
+
+    def delete_expired(self, cutoff: float, now: float) -> list[str]:
+        expired = [
+            task.contract_id
+            for task in self._tasks.values()
+            if task.status in ("done", "failed")
+            and task.updated_at < cutoff
+        ]
+        for contract_id in expired:
+            self._tasks.pop(contract_id, None)
+            self._expired.add(contract_id)
+        return expired
+
+    def is_expired(self, contract_id: str) -> bool:
+        return contract_id in self._expired
+
+    def expired_count(self) -> int:
+        return len(self._expired)
+
+    def close(self) -> None:
+        pass
+
+    def _replace(self, contract_id: str, **changes) -> None:
+        self._tasks[contract_id] = dataclasses.replace(
+            self._tasks[contract_id], **changes
+        )

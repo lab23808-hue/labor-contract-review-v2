@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Any, Optional, Protocol
 
 from core.contract import Contract
+from core.review_task import ReviewTask
 
 
 class UploadSinkError(Exception):
@@ -42,6 +43,50 @@ class TraceSink(Protocol):
     def write_text(self, name: str, text: str) -> None: ...
 
     def log(self, message: str) -> None: ...
+
+
+class ReviewTaskRepository(Protocol):
+    path: str
+
+    def create(
+        self,
+        contract_id: str,
+        filename: str,
+        cleaned_text: Optional[str],
+        now: float,
+    ) -> None: ...
+
+    def set_cleaned_text(
+        self, contract_id: str, cleaned_text: str, now: float
+    ) -> None: ...
+
+    def mark_processing(self, contract_id: str, now: float) -> None: ...
+
+    def mark_queued(self, contract_id: str, now: float) -> None: ...
+
+    def mark_done(
+        self, contract_id: str, result: dict[str, Any], now: float
+    ) -> None: ...
+
+    def mark_failed(
+        self, contract_id: str, error: str, now: float
+    ) -> None: ...
+
+    def delete(self, contract_id: str) -> None: ...
+
+    def get(self, contract_id: str) -> Optional[ReviewTask]: ...
+
+    def list_all(self) -> list[ReviewTask]: ...
+
+    def delete_expired(
+        self, cutoff: float, now: float
+    ) -> list[str]: ...
+
+    def is_expired(self, contract_id: str) -> bool: ...
+
+    def expired_count(self) -> int: ...
+
+    def close(self) -> None: ...
 
 
 @dataclass(frozen=True)

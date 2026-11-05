@@ -3,7 +3,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from api.dependencies import get_review_manager
+from api.dependencies import get_review_service
 from api.review_presenters import (
     error_context,
     failed_context,
@@ -11,15 +11,15 @@ from api.review_presenters import (
     report_context,
     status_context,
 )
-from app.review_tasks import ReviewTaskManager
+from app.review_service import ReviewService
 
 router = APIRouter(tags=["review"])
 
-ManagerDep = Annotated[ReviewTaskManager, Depends(get_review_manager)]
+ServiceDep = Annotated[ReviewService, Depends(get_review_service)]
 
 
 @router.get("/result/{contract_id}")
-def get_result(contract_id: str, manager: ManagerDep) -> dict[str, Any]:
+def get_result(contract_id: str, manager: ServiceDep) -> dict[str, Any]:
     record = manager.get(contract_id)
     if record is None:
         if manager.is_expired(contract_id):
@@ -34,13 +34,13 @@ def get_result(contract_id: str, manager: ManagerDep) -> dict[str, Any]:
 
 
 @router.get("/stats")
-def get_stats(manager: ManagerDep) -> dict[str, Any]:
+def get_stats(manager: ServiceDep) -> dict[str, Any]:
     return manager.stats()
 
 
 @router.get("/report/{contract_id}", response_class=HTMLResponse)
 def get_report(
-    contract_id: str, request: Request, manager: ManagerDep
+    contract_id: str, request: Request, manager: ServiceDep
 ):
     record = manager.get(contract_id)
     if record is None:

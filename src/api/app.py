@@ -13,7 +13,7 @@ from api.routes import contracts, review
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.contract_repository.reset_parsing_to_failed()
     yield
-    app.state.review_manager.close()
+    app.state.review_queue.close()
 
 
 def create_app(

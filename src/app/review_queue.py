@@ -1,36 +1,17 @@
-import json
 import logging
-import sqlite3
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Optional
 
 from app.review import run_full_review
 from domain.extractor import extract_fields
+from domain.ports import ReviewTaskRepository
 
 logger = logging.getLogger(__name__)
 
 MAX_WORKERS = 16
-
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS review_tasks (
-    task_id TEXT PRIMARY KEY,
-    filename TEXT NOT NULL,
-    status TEXT NOT NULL,
-    result_json TEXT,
-    error TEXT,
-    cleaned_text TEXT,
-    created_at REAL NOT NULL,
-    updated_at REAL NOT NULL
-);
-CREATE TABLE IF NOT EXISTS expired_task_ids (
-    task_id TEXT PRIMARY KEY,
-    expired_at REAL NOT NULL
-);
-"""
 
 
 @dataclass
@@ -45,201 +26,27 @@ class TaskRecord:
     finished_at: Optional[float] = None
 
 
-class ReviewTaskStore:
-    def __init__(self, path: Path | str) -> None:
-        self.path = str(path)
-        if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(
-            self.path, check_same_thread=False
-        )
-        self._conn.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
-        with self._lock:
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.executescript(_SCHEMA)
-            self._migrate()
-            self._conn.commit()
-
-    def _migrate(self) -> None:
-        # 旧库用 content BLOB 存原始字节，新库改存清洗文本；
-        # CREATE TABLE IF NOT EXISTS 不会改已有表，需要显式补列。
-        columns = {
-            row["name"]
-            for row in self._conn.execute(
-                "PRAGMA table_info(review_tasks)"
-            )
-        }
-        if "cleaned_text" not in columns:
-            self._conn.execute(
-                "ALTER TABLE review_tasks ADD COLUMN cleaned_text TEXT"
-            )
-        if "content" in columns:
-            try:
-                self._conn.execute(
-                    "ALTER TABLE review_tasks DROP COLUMN content"
-                )
-            except sqlite3.OperationalError:
-                logger.warning(
-                    "", extra={"event": "task.migration_keep_content"}
-                )
-
-    def create_task(
-        self,
-        task_id: str,
-        filename: str,
-        cleaned_text: Optional[str],
-        now: float,
-    ) -> None:
-        with self._lock:
-            self._conn.execute(
-                "INSERT INTO review_tasks "
-                "(task_id, filename, status, result_json, error, "
-                "cleaned_text, created_at, updated_at) "
-                "VALUES (?, ?, 'queued', NULL, NULL, ?, ?, ?)",
-                (task_id, filename, cleaned_text, now, now),
-            )
-            self._conn.commit()
-
-    def set_cleaned_text(
-        self, task_id: str, cleaned_text: str, now: float
-    ) -> None:
-        with self._lock:
-            self._conn.execute(
-                "UPDATE review_tasks SET status='queued', "
-                "cleaned_text=?, updated_at=? WHERE task_id=?",
-                (cleaned_text, now, task_id),
-            )
-            self._conn.commit()
-
-    def mark_processing(self, task_id: str, now: float) -> None:
-        self._update_status(task_id, "processing", now)
-
-    def mark_queued(self, task_id: str, now: float) -> None:
-        self._update_status(task_id, "queued", now)
-
-    def mark_done(
-        self, task_id: str, result_json: str, now: float
-    ) -> None:
-        with self._lock:
-            self._conn.execute(
-                "UPDATE review_tasks SET status='done', "
-                "result_json=?, error=NULL, cleaned_text=NULL, "
-                "updated_at=? WHERE task_id=?",
-                (result_json, now, task_id),
-            )
-            self._conn.commit()
-
-    def mark_failed(
-        self, task_id: str, error: str, now: float
-    ) -> None:
-        with self._lock:
-            self._conn.execute(
-                "UPDATE review_tasks SET status='failed', "
-                "result_json=NULL, error=?, cleaned_text=NULL, "
-                "updated_at=? WHERE task_id=?",
-                (error, now, task_id),
-            )
-            self._conn.commit()
-
-    def delete_task(self, task_id: str) -> None:
-        with self._lock:
-            self._conn.execute(
-                "DELETE FROM review_tasks WHERE task_id=?",
-                (task_id,),
-            )
-            self._conn.commit()
-
-    def get(self, task_id: str):
-        with self._lock:
-            return self._conn.execute(
-                "SELECT * FROM review_tasks WHERE task_id=?",
-                (task_id,),
-            ).fetchone()
-
-    def list_all(self) -> list[sqlite3.Row]:
-        with self._lock:
-            return self._conn.execute(
-                "SELECT * FROM review_tasks ORDER BY created_at"
-            ).fetchall()
-
-    def delete_expired(
-        self, cutoff: float, now: float
-    ) -> list[str]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT task_id FROM review_tasks "
-                "WHERE status IN ('done', 'failed') AND updated_at < ?",
-                (cutoff,),
-            ).fetchall()
-            task_ids = [row["task_id"] for row in rows]
-            if not task_ids:
-                return []
-            placeholders = ",".join("?" for _ in task_ids)
-            self._conn.executemany(
-                "INSERT OR REPLACE INTO expired_task_ids "
-                "(task_id, expired_at) VALUES (?, ?)",
-                [(task_id, now) for task_id in task_ids],
-            )
-            self._conn.execute(
-                f"DELETE FROM review_tasks WHERE task_id IN ({placeholders})",
-                task_ids,
-            )
-            self._conn.commit()
-            return task_ids
-
-    def is_expired(self, task_id: str) -> bool:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT 1 FROM expired_task_ids WHERE task_id=?",
-                (task_id,),
-            ).fetchone()
-            return row is not None
-
-    def expired_count(self) -> int:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT COUNT(*) AS count FROM expired_task_ids"
-            ).fetchone()
-            return int(row["count"])
-
-    def close(self) -> None:
-        with self._lock:
-            self._conn.close()
-
-    def _update_status(
-        self, task_id: str, status: str, now: float
-    ) -> None:
-        with self._lock:
-            self._conn.execute(
-                "UPDATE review_tasks SET status=?, updated_at=? "
-                "WHERE task_id=?",
-                (status, now, task_id),
-            )
-            self._conn.commit()
-
-
-class ReviewTaskManager:
+class ReviewQueue:
     def __init__(
         self,
         client: Any,
+        store: ReviewTaskRepository,
         *,
         workers: int,
         max_inflight: int,
         queue_limit: int,
-        store_path: Path | str,
         ttl_seconds: float,
         cleanup_interval: float,
     ) -> None:
         if queue_limit <= 0:
             raise ValueError("queue_limit must be positive")
         self.client = client
+        self.store = store
         self.workers = min(max(1, workers), MAX_WORKERS)
         self.max_inflight = min(max(1, max_inflight), MAX_WORKERS)
         self.queue_limit = queue_limit
         self.ttl_seconds = ttl_seconds
         self.cleanup_interval = cleanup_interval
-        self.store = ReviewTaskStore(store_path)
         self._executor = ThreadPoolExecutor(
             max_workers=self.workers,
             thread_name_prefix="review-task",
@@ -273,13 +80,13 @@ class ReviewTaskManager:
         with self._lock:
             self._tasks[task_id] = record
         try:
-            self.store.create_task(task_id, filename, None, now)
+            self.store.create(task_id, filename, None, now)
         except Exception:
             self._admission.release()
             with self._lock:
                 self._tasks.pop(task_id, None)
             try:
-                self.store.delete_task(task_id)
+                self.store.delete(task_id)
             except Exception:
                 logger.exception("task.cleanup_failed")
             return False
@@ -320,7 +127,7 @@ class ReviewTaskManager:
         with self._lock:
             self._tasks.pop(task_id, None)
         try:
-            self.store.delete_task(task_id)
+            self.store.delete(task_id)
         except Exception:
             logger.exception("task.cleanup_failed")
         self._admission.release()
@@ -331,7 +138,7 @@ class ReviewTaskManager:
         if record is None:
             return False
         try:
-            self.store.delete_task(task_id)
+            self.store.delete(task_id)
         except Exception:
             logger.exception("task.cleanup_failed")
         if record.status == "queued":
@@ -413,49 +220,44 @@ class ReviewTaskManager:
         self.store.close()
 
     def _recover(self) -> None:
-        rows = self.store.list_all()
+        tasks = self.store.list_all()
         now = time.time()
-        for row in rows:
-            result = (
-                json.loads(row["result_json"])
-                if row["result_json"]
-                else None
-            )
+        for task in tasks:
             record = TaskRecord(
-                task_id=row["task_id"],
-                filename=row["filename"],
-                status=row["status"],
-                result=result,
-                error=row["error"],
-                created_at=row["created_at"],
+                task_id=task.contract_id,
+                filename=task.filename,
+                status=task.status,
+                result=task.result,
+                error=task.error,
+                created_at=task.created_at,
                 finished_at=(
-                    row["updated_at"]
-                    if row["status"] in ("done", "failed")
+                    task.updated_at
+                    if task.status in ("done", "failed")
                     else None
                 ),
             )
             with self._lock:
                 self._tasks[record.task_id] = record
 
-        for row in rows:
-            if row["status"] not in ("queued", "processing"):
+        for task in tasks:
+            if task.status not in ("queued", "processing"):
                 continue
-            if row["cleaned_text"] is None:
+            if task.cleaned_text is None:
                 self._mark_failed(
-                    row["task_id"], "持久化记录缺少清洗文本"
+                    task.contract_id, "持久化记录缺少清洗文本"
                 )
                 continue
-            if row["status"] == "processing":
-                self.store.mark_queued(row["task_id"], now)
+            if task.status == "processing":
+                self.store.mark_queued(task.contract_id, now)
                 with self._lock:
-                    record = self._tasks.get(row["task_id"])
+                    record = self._tasks.get(task.contract_id)
                     if record is not None:
                         record.status = "queued"
                 logger.info(
                     "",
                     extra={
                         "event": "task.requeued",
-                        "task_id": row["task_id"],
+                        "task_id": task.contract_id,
                         "previous_status": "processing",
                     },
                 )
@@ -464,7 +266,7 @@ class ReviewTaskManager:
                     "",
                     extra={
                         "event": "task.recovery_deferred",
-                        "task_id": row["task_id"],
+                        "task_id": task.contract_id,
                     },
                 )
                 continue
@@ -472,13 +274,13 @@ class ReviewTaskManager:
                 "",
                 extra={
                     "event": "task.recovered",
-                    "task_id": row["task_id"],
+                    "task_id": task.contract_id,
                 },
             )
             self._executor.submit(
                 self._run,
-                row["task_id"],
-                row["cleaned_text"],
+                task.contract_id,
+                task.cleaned_text,
             )
 
     def _mark_failed(self, task_id: str, error: str) -> None:
@@ -515,11 +317,7 @@ class ReviewTaskManager:
                 record.result = report
                 record.status = "done"
                 record.finished_at = now
-            self.store.mark_done(
-                task_id,
-                json.dumps(report, ensure_ascii=False),
-                now,
-            )
+            self.store.mark_done(task_id, report, now)
         except Exception as exc:
             now = time.time()
             error = f"{type(exc).__name__}: {exc}"
