@@ -1,34 +1,34 @@
 import json
 import logging
-import math
 import sqlite3
 import threading
 import time
 import uuid
-from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from app.review import run_full_review
+from config import settings
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields
 from domain.ports import DocumentParser
+from infra.rate_limiter import SlidingWindowRateLimiter
 
 logger = logging.getLogger(__name__)
 
 MAX_WORKERS = 16
-DEFAULT_WORKERS = 8
-DEFAULT_MAX_INFLIGHT = 8
-DEFAULT_RPS = 8.0
-DEFAULT_QUEUE_LIMIT = 50
-DEFAULT_RATE_LIMIT = 5
-DEFAULT_RATE_WINDOW = 60.0
-DEFAULT_MAX_FILE_SIZE = 2 * 1024 * 1024
-DEFAULT_TTL_SECONDS = 24 * 3600
-DEFAULT_CLEANUP_INTERVAL = 600.0
-DEFAULT_STORE_PATH = Path("data") / "review_tasks.sqlite"
+DEFAULT_WORKERS = settings.REVIEW_WORKERS
+DEFAULT_MAX_INFLIGHT = settings.REVIEW_MAX_INFLIGHT
+DEFAULT_RPS = settings.REVIEW_RPS
+DEFAULT_QUEUE_LIMIT = settings.REVIEW_QUEUE_LIMIT
+DEFAULT_RATE_LIMIT = settings.REVIEW_RATE_LIMIT
+DEFAULT_RATE_WINDOW = settings.REVIEW_RATE_WINDOW
+DEFAULT_MAX_FILE_SIZE = settings.MAX_UPLOAD_BYTES
+DEFAULT_TTL_SECONDS = settings.REVIEW_TTL_SECONDS
+DEFAULT_CLEANUP_INTERVAL = settings.REVIEW_CLEANUP_INTERVAL
+DEFAULT_STORE_PATH = Path(settings.REVIEW_STORE_PATH)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS review_tasks (
@@ -58,34 +58,6 @@ class TaskRecord:
     created_at: float = field(default_factory=time.time)
     started_at: Optional[float] = None
     finished_at: Optional[float] = None
-
-
-class SlidingWindowRateLimiter:
-    def __init__(self, limit: int, window_seconds: float) -> None:
-        self.limit = limit
-        self.window_seconds = window_seconds
-        self._events: dict[str, deque[float]] = {}
-        self._lock = threading.Lock()
-
-    def check(self, key: str) -> tuple[bool, int, int]:
-        now = time.monotonic()
-        with self._lock:
-            events = self._events.setdefault(key, deque())
-            while (
-                events
-                and events[0] <= now - self.window_seconds
-            ):
-                events.popleft()
-            if len(events) >= self.limit:
-                retry_after = max(
-                    1,
-                    math.ceil(
-                        self.window_seconds - (now - events[0])
-                    ),
-                )
-                return False, 0, retry_after
-            events.append(now)
-            return True, self.limit - len(events), 0
 
 
 class ReviewTaskStore:

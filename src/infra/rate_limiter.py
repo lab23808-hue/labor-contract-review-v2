@@ -1,6 +1,36 @@
+import math
 import threading
 import time
+from collections import deque
 from typing import Callable
+
+
+class SlidingWindowRateLimiter:
+    def __init__(self, limit: int, window_seconds: float) -> None:
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self._events: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def check(self, key: str) -> tuple[bool, int, int]:
+        now = time.monotonic()
+        with self._lock:
+            events = self._events.setdefault(key, deque())
+            while (
+                events
+                and events[0] <= now - self.window_seconds
+            ):
+                events.popleft()
+            if len(events) >= self.limit:
+                retry_after = max(
+                    1,
+                    math.ceil(
+                        self.window_seconds - (now - events[0])
+                    ),
+                )
+                return False, 0, retry_after
+            events.append(now)
+            return True, self.limit - len(events), 0
 
 
 class TokenBucket:
