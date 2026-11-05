@@ -67,16 +67,25 @@ def test_batch_rejects_too_many_files(client):
     assert "20" in response.json()["detail"]
 
 
-def test_batch_rejects_total_size_over_limit(client, monkeypatch):
+def test_batch_rejects_total_size_over_limit(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "MAX_BATCH_BYTES", 10)
-
-    response = client.post(
-        "/contracts/batch",
-        files=[
-            ("files", ("a.txt", b"123456", "text/plain")),
-            ("files", ("b.txt", b"123456", "text/plain")),
-        ],
+    app = create_app(
+        repository=SQLiteContractRepository(tmp_path),
+        parsers={"txt": TxtParser()},
+        review_client=FakeLLM(
+            {"risks": [], "other_observations": []}
+        ),
+        review_store_path=str(tmp_path / "review.sqlite"),
     )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/contracts/batch",
+            files=[
+                ("files", ("a.txt", b"123456", "text/plain")),
+                ("files", ("b.txt", b"123456", "text/plain")),
+            ],
+        )
 
     assert response.status_code == 422
     assert "总大小" in response.json()["detail"]

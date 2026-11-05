@@ -1,5 +1,3 @@
-import asyncio
-import uuid
 from typing import Annotated, Optional
 from urllib.parse import quote
 
@@ -8,7 +6,6 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     File,
-    HTTPException,
     Query,
     Request,
     Response,
@@ -16,20 +13,21 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
-from api.dependencies import (
-    get_contract_manager,
-    get_parse_semaphore,
-    get_review_service,
-    get_review_rate_limiter,
-)
-from app.contract_manager import ContractManager, run_parse_task
-from app.review_service import ReviewService
-from config import settings
+from api.dependencies import get_contract_manager, get_upload_pipeline
+from app.contract_manager import ContractManager
+from app.upload_pipeline import UploadPipeline
 from core.contract import Contract
-from core.errors import ValidationError
-from domain.ports import RateLimiter
 
 router = APIRouter(tags=["contracts"])
+
+_BATCH_STATUS = {
+    "created": 201,
+    "duplicate": 409,
+    "invalid": 422,
+    "corrupted": 400,
+    "rate_limited": 429,
+    "queue_full": 503,
+}
 
 
 class BatchItemResponse(BaseModel):
@@ -65,52 +63,20 @@ async def upload_contract(
     response: Response,
     background_tasks: BackgroundTasks,
     file: Annotated[UploadFile, File(...)],
-    manager: Annotated[ContractManager, Depends(get_contract_manager)],
-    review_service: Annotated[
-        ReviewService, Depends(get_review_service)
+    pipeline: Annotated[
+        UploadPipeline, Depends(get_upload_pipeline)
     ],
-    rate_limiter: Annotated[
-        RateLimiter, Depends(get_review_rate_limiter)
-    ],
-    semaphore: Annotated[asyncio.Semaphore, Depends(get_parse_semaphore)],
 ) -> Contract:
     content = await file.read()
     ip = request.client.host if request.client else "unknown"
-    allowed, remaining, retry_after = rate_limiter.check(ip)
-    response.headers["X-RateLimit-Remaining"] = str(remaining)
-    if not allowed:
-        raise HTTPException(
-            status_code=429,
-            detail="上传过于频繁，请稍后再试",
-            headers={
-                "X-RateLimit-Remaining": "0",
-                "Retry-After": str(retry_after),
-            },
-        )
-
-    contract_id = uuid.uuid4().hex
-    filename = file.filename or ""
-    if not review_service.reserve(contract_id, filename):
-        raise HTTPException(
-            status_code=503,
-            detail="系统忙",
-            headers={"X-RateLimit-Remaining": str(remaining)},
-        )
-    try:
-        manager.upload(filename, content, contract_id=contract_id)
-        contract = manager.start_parse(contract_id)
-    except Exception:
-        review_service.release_reservation(contract_id)
-        raise
-
-    background_tasks.add_task(
-        run_parse_task,
-        manager,
-        contract_id,
-        semaphore,
-        review_service,
+    result = pipeline.ingest(file.filename or "", content, ip)
+    response.headers["X-RateLimit-Remaining"] = str(
+        result.rate_limit_remaining
     )
-    return contract
+    background_tasks.add_task(
+        pipeline.process, result.contract.contract_id
+    )
+    return result.contract
 
 
 @router.post("/contracts/batch", response_model=BatchUploadResponse)
@@ -119,83 +85,36 @@ async def upload_batch(
     response: Response,
     files: Annotated[list[UploadFile], File(...)],
     background_tasks: BackgroundTasks,
-    manager: Annotated[ContractManager, Depends(get_contract_manager)],
-    review_service: Annotated[
-        ReviewService, Depends(get_review_service)
+    pipeline: Annotated[
+        UploadPipeline, Depends(get_upload_pipeline)
     ],
-    rate_limiter: Annotated[
-        RateLimiter, Depends(get_review_rate_limiter)
-    ],
-    semaphore: Annotated[asyncio.Semaphore, Depends(get_parse_semaphore)],
 ) -> BatchUploadResponse:
-    if len(files) > settings.MAX_BATCH_FILES:
-        raise ValidationError(
-            f"批量上传文件数 {len(files)} 超过上限 {settings.MAX_BATCH_FILES}"
-        )
-
     ip = request.client.host if request.client else "unknown"
-    contents: list[tuple[str, bytes]] = []
-    denied_items: list[BatchItemResponse] = []
-    total_bytes = 0
-    remaining = 0
-    for upload in files:
-        content = await upload.read()
-        total_bytes += len(content)
-        if total_bytes > settings.MAX_BATCH_BYTES:
-            raise ValidationError(
-                f"批量上传总大小超过上限 {settings.MAX_BATCH_BYTES} 字节"
-            )
-        allowed, remaining, _ = rate_limiter.check(ip)
-        if not allowed:
-            denied_items.append(
-                BatchItemResponse(
-                    filename=upload.filename or "",
-                    contract_id=None,
-                    status=429,
-                    detail="上传过于频繁，请稍后再试",
-                )
-            )
-            continue
-        contents.append((upload.filename or "", content))
-    response.headers["X-RateLimit-Remaining"] = str(remaining)
+    payload = [
+        (upload.filename or "", await upload.read()) for upload in files
+    ]
+    result = pipeline.ingest_batch(payload, ip)
+    response.headers["X-RateLimit-Remaining"] = str(
+        result.rate_limit_remaining
+    )
 
     items: list[BatchItemResponse] = []
     succeeded = 0
-    for item in manager.batch_upload(contents):
-        detail = item.detail
-        if item.status == 201:
-            contract_id = item.contract_id
-            if not review_service.reserve(contract_id, item.filename):
-                manager.delete(contract_id)
-                items.append(
-                    BatchItemResponse(
-                        filename=item.filename,
-                        contract_id=None,
-                        status=503,
-                        detail="系统忙",
-                    )
-                )
-                continue
-            manager.start_parse(contract_id)
+    for item in result.items:
+        if item.outcome == "created" and item.contract_id is not None:
             background_tasks.add_task(
-                run_parse_task,
-                manager,
-                contract_id,
-                semaphore,
-                review_service,
+                pipeline.process, item.contract_id
             )
-            detail = "uploaded, parse scheduled"
             succeeded += 1
         items.append(
             BatchItemResponse(
                 filename=item.filename,
                 contract_id=item.contract_id,
-                status=item.status,
-                detail=detail,
+                status=_BATCH_STATUS[item.outcome],
+                detail=item.detail,
             )
         )
 
-    items.extend(denied_items)
     return BatchUploadResponse(
         items=items,
         summary=BatchSummary(
@@ -236,26 +155,23 @@ def get_contract(
 def parse_contract(
     contract_id: str,
     background_tasks: BackgroundTasks,
-    manager: Annotated[ContractManager, Depends(get_contract_manager)],
-    semaphore: Annotated[asyncio.Semaphore, Depends(get_parse_semaphore)],
+    pipeline: Annotated[
+        UploadPipeline, Depends(get_upload_pipeline)
+    ],
 ) -> Contract:
-    contract = manager.start_parse(contract_id)
-    background_tasks.add_task(
-        run_parse_task, manager, contract_id, semaphore, None
-    )
+    contract = pipeline.start_parse(contract_id)
+    background_tasks.add_task(pipeline.process, contract_id, False)
     return contract
 
 
 @router.delete("/contracts/{contract_id}", status_code=204)
 def delete_contract(
     contract_id: str,
-    manager: Annotated[ContractManager, Depends(get_contract_manager)],
-    review_service: Annotated[
-        ReviewService, Depends(get_review_service)
+    pipeline: Annotated[
+        UploadPipeline, Depends(get_upload_pipeline)
     ],
 ) -> Response:
-    manager.delete(contract_id)
-    review_service.cancel(contract_id)
+    pipeline.delete(contract_id)
     return Response(status_code=204)
 
 

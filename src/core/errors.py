@@ -24,3 +24,14 @@ class CorruptedFileError(DomainError):
 
 class StorageDeleteError(DomainError):
     pass
+
+
+class RateLimitExceeded(DomainError):
+    def __init__(self, retry_after: int) -> None:
+        super().__init__("上传过于频繁，请稍后再试")
+        self.retry_after = retry_after
+
+
+class QueueFullError(DomainError):
+    def __init__(self) -> None:
+        super().__init__("系统忙")

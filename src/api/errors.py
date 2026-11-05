@@ -6,6 +6,8 @@ from core.errors import (
     ContractNotFoundError,
     CorruptedFileError,
     InvalidStateError,
+    QueueFullError,
+    RateLimitExceeded,
     StorageDeleteError,
     ValidationError,
 )
@@ -56,3 +58,26 @@ def register_exception_handlers(app: FastAPI) -> None:
         request: Request, exc: StorageDeleteError
     ) -> JSONResponse:
         return JSONResponse(status_code=500, content={"detail": str(exc)})
+
+    @app.exception_handler(RateLimitExceeded)
+    async def handle_rate_limit(
+        request: Request, exc: RateLimitExceeded
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": str(exc)},
+            headers={
+                "X-RateLimit-Remaining": "0",
+                "Retry-After": str(exc.retry_after),
+            },
+        )
+
+    @app.exception_handler(QueueFullError)
+    async def handle_queue_full(
+        request: Request, exc: QueueFullError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": str(exc)},
+            headers={"X-RateLimit-Remaining": "0"},
+        )

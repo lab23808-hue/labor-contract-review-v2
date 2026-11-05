@@ -5,12 +5,15 @@ import threading
 import time
 import uuid
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from app.contract_manager import ContractManager, run_parse_task
+from app.contract_manager import ContractManager
+from app.parsing_service import ParsingService
+from app.upload_pipeline import UploadPipeline
 from domain.ports import ParsingError
 from fakes import InMemoryContractRepository
 from infra.llm_client import FakeLLM
@@ -137,13 +140,14 @@ def test_reparse_failure_cleans_previous_artifacts():
     repository = InMemoryContractRepository()
     parser = ScriptedParser()
     manager = ContractManager(repository, {"txt": parser})
+    parsing = ParsingService(repository, {"txt": parser})
     contract = manager.upload("contract.txt", b"first")
 
-    assert manager.parse(contract.contract_id).status == "parsed"
+    assert parsing.parse(contract.contract_id).status == "parsed"
     assert repository.artifacts
 
     parser.fail = True
-    failed = manager.parse(contract.contract_id)
+    failed = parsing.parse(contract.contract_id)
 
     assert failed.status == "failed"
     assert failed.parsed_path is None
@@ -163,14 +167,14 @@ def test_parse_conflict_and_not_found(parse_client):
 
 
 def test_parse_tasks_are_serialized():
-    class RecordingManager:
+    class RecordingParsing:
         def __init__(self) -> None:
             self.active = 0
             self.max_active = 0
             self.completed = 0
             self._lock = threading.Lock()
 
-        def execute_parse(self, contract_id: str) -> None:
+        def execute(self, contract_id: str):
             with self._lock:
                 self.active += 1
                 self.max_active = max(self.max_active, self.active)
@@ -178,26 +182,46 @@ def test_parse_tasks_are_serialized():
             with self._lock:
                 self.active -= 1
                 self.completed += 1
+            return SimpleNamespace(status="failed", error="test")
 
-    manager = RecordingManager()
+    class NoopReview:
+        def fail_reserved(self, contract_id, error) -> None:
+            pass
+
+        def submit_reserved(self, contract_id, cleaned_text) -> bool:
+            return True
+
+    parsing = RecordingParsing()
 
     async def run_all() -> None:
-        semaphore = asyncio.Semaphore(1)
+        pipeline = UploadPipeline(
+            contract_manager=None,
+            parsing_service=parsing,
+            review_service=NoopReview(),
+            rate_limiter=None,
+            parse_semaphore=asyncio.Semaphore(1),
+            max_batch_files=20,
+            max_batch_bytes=200 * 1024 * 1024,
+        )
         await asyncio.gather(
-            *(run_parse_task(manager, f"contract-{index}", semaphore) for index in range(3))
+            *(
+                pipeline.process(f"contract-{index}")
+                for index in range(3)
+            )
         )
 
     asyncio.run(run_all())
 
-    assert manager.max_active == 1
-    assert manager.completed == 3
+    assert parsing.max_active == 1
+    assert parsing.completed == 3
 
 
 def test_restart_keeps_parsed_pointers(tmp_path):
     repository = SQLiteContractRepository(tmp_path)
     manager = ContractManager(repository, {"txt": TxtParser()})
+    parsing = ParsingService(repository, {"txt": TxtParser()})
     created = manager.upload("contract.txt", b"first line")
-    assert manager.parse(created.contract_id).status == "parsed"
+    assert parsing.parse(created.contract_id).status == "parsed"
 
     reopened = SQLiteContractRepository(tmp_path)
     contract = reopened.get(created.contract_id)

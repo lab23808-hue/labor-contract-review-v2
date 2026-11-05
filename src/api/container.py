@@ -4,14 +4,15 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from app.contract_manager import ContractManager
+from app.parsing_service import ParsingService
 from app.review_queue import ReviewQueue
 from app.review_service import ReviewService
+from app.upload_pipeline import UploadPipeline
 from config import settings
 from domain.ports import (
     ContractRepository,
     DocumentParser,
     DocumentValidator,
-    RateLimiter,
 )
 from domain.validation import UploadPolicy
 from infra.docx_parser import DocxParser
@@ -43,8 +44,7 @@ class AppContainer:
     contract_manager: ContractManager
     review_queue: ReviewQueue
     review_service: ReviewService
-    review_rate_limiter: RateLimiter
-    parse_semaphore: asyncio.Semaphore
+    upload_pipeline: UploadPipeline
 
 
 def build_container(
@@ -127,23 +127,31 @@ def build_container(
         ttl_seconds=ttl_seconds,
         cleanup_interval=cleanup_interval,
     )
+    review_service = ReviewService(review_queue)
+    contract_manager = ContractManager(
+        contract_repository,
+        parsers,
+        validator,
+        policy=UploadPolicy(
+            allowed_extensions=settings.ALLOWED_EXTENSIONS,
+            max_upload_bytes=settings.MAX_UPLOAD_BYTES,
+        ),
+    )
+    upload_pipeline = UploadPipeline(
+        contract_manager,
+        ParsingService(contract_repository, parsers),
+        review_service,
+        SlidingWindowRateLimiter(rate_limit, rate_window),
+        asyncio.Semaphore(1),
+        max_batch_files=settings.MAX_BATCH_FILES,
+        max_batch_bytes=settings.MAX_BATCH_BYTES,
+    )
     return AppContainer(
         contract_repository=contract_repository,
         parsers=parsers,
         validator=validator,
-        contract_manager=ContractManager(
-            contract_repository,
-            parsers,
-            validator,
-            policy=UploadPolicy(
-                allowed_extensions=settings.ALLOWED_EXTENSIONS,
-                max_upload_bytes=settings.MAX_UPLOAD_BYTES,
-            ),
-        ),
+        contract_manager=contract_manager,
         review_queue=review_queue,
-        review_service=ReviewService(review_queue),
-        review_rate_limiter=SlidingWindowRateLimiter(
-            rate_limit, rate_window
-        ),
-        parse_semaphore=asyncio.Semaphore(1),
+        review_service=review_service,
+        upload_pipeline=upload_pipeline,
     )
