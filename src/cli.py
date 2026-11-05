@@ -15,12 +15,13 @@ if str(_SRC) not in sys.path:
 
 from app.batch import run_batch
 from app.review import run_full_review
-from app.trace import TraceRecorder
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields
 from infra.docx_parser import DocxParser
 from infra.llm_client import DeepSeekLLMClient
+from infra.mineru_parser import MinerUParser
 from infra.rate_limiter import RequestThrottle
+from infra.trace import TraceRecorder
 from infra.txt_parser import TxtParser
 from logging_setup import setup_logging
 
@@ -123,21 +124,21 @@ def _run_review(args) -> int:
         },
     )
 
-    trace_dir = None
+    trace = None
     if args.trace:
         trace_dir = _create_trace_dir(run_id)
-        recorder = TraceRecorder(trace_dir)
+        trace = TraceRecorder(trace_dir)
         meta = {
             "path": str(path.resolve()),
             "size": path.stat().st_size,
             "suffix": path.suffix,
         }
-        recorder.write_json("00_input.meta.json", meta)
-        recorder.write_text(
+        trace.write_json("00_input.meta.json", meta)
+        trace.write_text(
             "01_parsed.txt",
             _with_footer(parsed_text, f"字符数: {len(parsed_text)}"),
         )
-        recorder.write_text(
+        trace.write_text(
             "02_cleaned.txt",
             _with_footer(
                 cleaned_text,
@@ -145,17 +146,18 @@ def _run_review(args) -> int:
                 f"删除字符数: {removed}",
             ),
         )
-        recorder.log(
+        trace.log(
             f"input path={meta['path']} size={meta['size']} "
             f"suffix={meta['suffix'] or '(none)'}"
         )
-        recorder.log(f"parsed chars={len(parsed_text)}")
-        recorder.log(f"cleaned chars={len(cleaned_text)} removed={removed}")
+        trace.log(f"parsed chars={len(parsed_text)}")
+        trace.log(f"cleaned chars={len(cleaned_text)} removed={removed}")
 
     report = run_full_review(
         cleaned_text,
         extract_fields(cleaned_text),
-        trace_dir=trace_dir,
+        DeepSeekLLMClient(),
+        trace=trace,
         run_id=run_id,
     )
     elapsed = round(time.monotonic() - started, 3)
@@ -208,7 +210,13 @@ def _run_batch(args) -> int:
         client,
         args.workers,
         run_id,
+        parsers={
+            "txt": TxtParser(),
+            "docx": DocxParser(),
+            "pdf": MinerUParser(),
+        },
         trace_root=trace_root,
+        trace_factory=TraceRecorder if args.trace else None,
     )
     elapsed = round(time.monotonic() - started, 3)
     summary["batch_elapsed"] = elapsed

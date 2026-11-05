@@ -75,7 +75,11 @@ def test_batch_matches_single_runs_and_sums_zero_tokens(tmp_path):
     client = FakeLLM({"risks": [], "other_observations": []})
 
     summary = run_batch(
-        tmp_path, client, workers=2, batch_run_id="batch_test"
+        tmp_path,
+        client,
+        workers=2,
+        batch_run_id="batch_test",
+        parsers={"txt": TxtParser()},
     )
 
     assert summary["ok"] == 2
@@ -102,7 +106,11 @@ def test_batch_isolates_a_client_exception(tmp_path, caplog):
 
     with caplog.at_level(logging.WARNING):
         summary = run_batch(
-            tmp_path, FlakyClient(), workers=1, batch_run_id="batch_test"
+            tmp_path,
+            FlakyClient(),
+            workers=1,
+            batch_run_id="batch_test",
+            parsers={"txt": TxtParser()},
         )
 
     assert summary["ok"] == 1
@@ -118,7 +126,11 @@ def test_batch_marks_llm_failed_without_crashing(tmp_path):
     _write_corpus(tmp_path)
 
     summary = run_batch(
-        tmp_path, FailingLLM(), workers=2, batch_run_id="batch_test"
+        tmp_path,
+        FailingLLM(),
+        workers=2,
+        batch_run_id="batch_test",
+        parsers={"txt": TxtParser()},
     )
 
     assert summary["ok"] == 0
@@ -143,7 +155,11 @@ def test_batch_summary_sums_tokens(tmp_path):
     )
 
     summary = run_batch(
-        tmp_path, client, workers=2, batch_run_id="batch_test"
+        tmp_path,
+        client,
+        workers=2,
+        batch_run_id="batch_test",
+        parsers={"txt": TxtParser()},
     )
 
     assert summary["tokens"] == {

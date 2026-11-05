@@ -21,7 +21,11 @@ from domain.ports import (
     ParsingError,
     UnsupportedFormatError,
 )
-from domain.validation import validate_upload
+from domain.validation import (
+    DEFAULT_UPLOAD_POLICY,
+    UploadPolicy,
+    validate_upload,
+)
 
 
 @dataclass(frozen=True)
@@ -38,10 +42,12 @@ class ContractManager:
         repository: ContractRepository,
         parsers: Mapping[str, DocumentParser],
         validator: Optional[DocumentValidator] = None,
+        policy: UploadPolicy = DEFAULT_UPLOAD_POLICY,
     ) -> None:
         self._repository = repository
         self._parsers = parsers
         self._validator = validator
+        self._policy = policy
 
     def upload(
         self,
@@ -49,7 +55,9 @@ class ContractManager:
         content: bytes,
         contract_id: Optional[str] = None,
     ) -> Contract:
-        file_format = validate_upload(filename, content, self._validator)
+        file_format = validate_upload(
+            filename, content, self._validator, policy=self._policy
+        )
 
         sha256 = hashlib.sha256(content).hexdigest()
         existing = self._repository.find_by_sha256(sha256)

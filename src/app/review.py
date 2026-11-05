@@ -1,10 +1,9 @@
 import copy
 import logging
-from pathlib import Path
-from typing import Any, Optional, Protocol
+from typing import Any, Optional
 
-from app.trace import TraceRecorder
 from domain.merge.merger import merge_review
+from domain.ports import LLMClient, TraceSink
 from domain.prompt_builder import build_prompt
 from domain.rules.noncompete import judge_noncompete
 from domain.rules.penalty import judge_penalty
@@ -17,18 +16,14 @@ from domain.verifier import verify_llm_output
 logger = logging.getLogger(__name__)
 
 
-class LLMClient(Protocol):
-    def call_llm(self, prompt: str) -> dict[str, Any]: ...
-
-
 def run_llm_branch(
     cleaned_text: str,
     extract_json: dict[str, Any],
-    llm_client: Optional[LLMClient] = None,
+    llm_client: LLMClient,
     raw_out: Optional[dict[str, Any]] = None,
     dropped_out: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
-    client = llm_client if llm_client is not None else _default_client()
+    client = llm_client
     prompt = build_prompt(cleaned_text, extract_json)
     raw = client.call_llm(prompt)
     if raw_out is not None:
@@ -42,11 +37,11 @@ def run_llm_branch(
 def run_full_review(
     cleaned_text: str,
     extract_json: dict[str, Any],
-    llm_client: Optional[LLMClient] = None,
-    trace_dir: Optional[Path] = None,
+    llm_client: LLMClient,
+    trace: Optional[TraceSink] = None,
     run_id: Optional[str] = None,
 ) -> dict[str, Any]:
-    recorder = TraceRecorder(trace_dir) if trace_dir is not None else None
+    recorder = trace
 
     rule_outputs = {
         "probation": _as_list(judge_probation(extract_json)),
@@ -196,9 +191,3 @@ def _zero_tokens() -> dict[str, Any]:
         "total_tokens": 0,
         "estimated": False,
     }
-
-
-def _default_client() -> LLMClient:
-    from infra.llm_client import DeepSeekLLMClient
-
-    return DeepSeekLLMClient()

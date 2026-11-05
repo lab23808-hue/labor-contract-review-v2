@@ -6,6 +6,7 @@ import pytest
 from app.review import run_llm_branch
 from config.llm import get_llm_config
 from domain.extractor import extract_fields
+from infra.llm_client import DeepSeekLLMClient
 
 FIXTURES = Path(__file__).parent / "fixtures" / "contracts"
 SNAPSHOTS = Path(__file__).parent / "snapshots" / "stability_0001"
@@ -23,8 +24,9 @@ def test_synthetic_0001_is_stable_over_five_runs():
     SNAPSHOTS.mkdir(parents=True, exist_ok=True)
 
     outputs = []
+    client = DeepSeekLLMClient()
     for index in range(1, 6):
-        result = run_llm_branch(text, extract_json)
+        result = run_llm_branch(text, extract_json, client)
         outputs.append(result)
         (SNAPSHOTS / f"run_{index}.json").write_text(
             json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"

@@ -190,8 +190,10 @@ def manager(tmp_path):
     review_manager = ReviewTaskManager(
         client=FakeLLM({"risks": [], "other_observations": []}),
         workers=1,
+        max_inflight=1,
         queue_limit=2,
         store_path=str(tmp_path / "submit.sqlite"),
+        ttl_seconds=86400,
         cleanup_interval=3600,
     )
     yield review_manager
@@ -268,8 +270,10 @@ def test_cancel_processing_releases_exactly_once(tmp_path):
     review_manager = ReviewTaskManager(
         client=BlockingLLM(),
         workers=1,
+        max_inflight=1,
         queue_limit=2,
         store_path=str(tmp_path / "cancel.sqlite"),
+        ttl_seconds=86400,
         cleanup_interval=3600,
     )
     try:

@@ -2,39 +2,35 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from app.review import run_full_review
 from domain.cleaning import clean_text
 from domain.extractor import extract_fields
-from infra.docx_parser import DocxParser
-from infra.txt_parser import TxtParser
+from domain.ports import DocumentParser, TraceSink
 
 logger = logging.getLogger(__name__)
 
-_SUFFIXES = {".txt", ".docx", ".pdf"}
 
-
-def list_contracts(directory: Path) -> list[Path]:
+def list_contracts(
+    directory: Path, parsers: Mapping[str, DocumentParser]
+) -> list[Path]:
+    suffixes = {f".{name.lower()}" for name in parsers}
     return sorted(
         path
         for path in Path(directory).iterdir()
-        if path.is_file() and path.suffix.lower() in _SUFFIXES
+        if path.is_file() and path.suffix.lower() in suffixes
     )
 
 
-def read_parsed(path: Path) -> str:
-    content = path.read_bytes()
-    suffix = path.suffix.lower()
-    if suffix == ".txt":
-        return TxtParser().parse(path.name, content)
-    if suffix == ".docx":
-        return DocxParser().parse(path.name, content)
-    if suffix == ".pdf":
-        from infra.mineru_parser import MinerUParser
-
-        return MinerUParser().parse(path.name, content)
-    raise ValueError(f"不支持的文件类型：{suffix}")
+def read_parsed(
+    path: Path, parsers: Mapping[str, DocumentParser]
+) -> str:
+    suffix = path.suffix.lower().lstrip(".")
+    parser = parsers.get(suffix)
+    if parser is None:
+        raise ValueError(f"不支持的文件类型：{path.suffix}")
+    return parser.parse(path.name, path.read_bytes())
 
 
 def run_batch(
@@ -42,26 +38,30 @@ def run_batch(
     client: Any,
     workers: int,
     batch_run_id: str,
+    parsers: Mapping[str, DocumentParser],
     trace_root: Optional[Path] = None,
+    trace_factory: Optional[Callable[[Path], TraceSink]] = None,
 ) -> dict[str, Any]:
-    files = list_contracts(directory)
+    files = list_contracts(directory, parsers)
     batch_started = time.monotonic()
     results: list[dict[str, Any]] = []
 
     def process(index: int, path: Path) -> dict[str, Any]:
         item_run_id = f"{batch_run_id}_{index:02d}"
         trace_dir = None
-        if trace_root is not None:
+        trace = None
+        if trace_root is not None and trace_factory is not None:
             trace_dir = Path(trace_root) / f"{index:02d}_{path.stem}"
+            trace = trace_factory(trace_dir)
         started = time.monotonic()
         try:
-            parsed = read_parsed(path)
+            parsed = read_parsed(path, parsers)
             cleaned = clean_text(parsed)
             report = run_full_review(
                 cleaned,
                 extract_fields(cleaned),
                 llm_client=client,
-                trace_dir=trace_dir,
+                trace=trace,
                 run_id=item_run_id,
             )
             elapsed = round(time.monotonic() - started, 3)

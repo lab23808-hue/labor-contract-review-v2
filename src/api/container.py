@@ -12,6 +12,7 @@ from domain.ports import (
     DocumentValidator,
     RateLimiter,
 )
+from domain.validation import UploadPolicy
 from infra.docx_parser import DocxParser
 from infra.llm_client import DeepSeekLLMClient
 from infra.mineru_parser import MinerUParser
@@ -128,7 +129,13 @@ def build_container(
         parsers=parsers,
         validator=validator,
         contract_manager=ContractManager(
-            contract_repository, parsers, validator
+            contract_repository,
+            parsers,
+            validator,
+            policy=UploadPolicy(
+                allowed_extensions=settings.ALLOWED_EXTENSIONS,
+                max_upload_bytes=settings.MAX_UPLOAD_BYTES,
+            ),
         ),
         review_manager=review_manager,
         review_rate_limiter=SlidingWindowRateLimiter(

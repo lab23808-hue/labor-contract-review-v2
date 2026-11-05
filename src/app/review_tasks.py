@@ -9,19 +9,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.review import run_full_review
-from config import settings
 from domain.extractor import extract_fields
 
 logger = logging.getLogger(__name__)
 
 MAX_WORKERS = 16
-DEFAULT_WORKERS = settings.REVIEW_WORKERS
-DEFAULT_MAX_INFLIGHT = settings.REVIEW_MAX_INFLIGHT
-DEFAULT_RPS = settings.REVIEW_RPS
-DEFAULT_QUEUE_LIMIT = settings.REVIEW_QUEUE_LIMIT
-DEFAULT_TTL_SECONDS = settings.REVIEW_TTL_SECONDS
-DEFAULT_CLEANUP_INTERVAL = settings.REVIEW_CLEANUP_INTERVAL
-DEFAULT_STORE_PATH = Path(settings.REVIEW_STORE_PATH)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS review_tasks (
@@ -231,12 +223,13 @@ class ReviewTaskManager:
     def __init__(
         self,
         client: Any,
-        workers: int = DEFAULT_WORKERS,
-        max_inflight: int = DEFAULT_MAX_INFLIGHT,
-        queue_limit: int = DEFAULT_QUEUE_LIMIT,
-        store_path: Path | str = DEFAULT_STORE_PATH,
-        ttl_seconds: float = DEFAULT_TTL_SECONDS,
-        cleanup_interval: float = DEFAULT_CLEANUP_INTERVAL,
+        *,
+        workers: int,
+        max_inflight: int,
+        queue_limit: int,
+        store_path: Path | str,
+        ttl_seconds: float,
+        cleanup_interval: float,
     ) -> None:
         if queue_limit <= 0:
             raise ValueError("queue_limit must be positive")

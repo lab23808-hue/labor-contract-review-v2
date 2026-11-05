@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Protocol
+from typing import Any, Optional, Protocol
 
 from core.contract import Contract
 
@@ -30,6 +30,18 @@ class DocumentValidator(Protocol):
 
 class RateLimiter(Protocol):
     def check(self, key: str) -> tuple[bool, int, int]: ...
+
+
+class LLMClient(Protocol):
+    def call_llm(self, prompt: str) -> dict[str, Any]: ...
+
+
+class TraceSink(Protocol):
+    def write_json(self, name: str, payload: Any) -> None: ...
+
+    def write_text(self, name: str, text: str) -> None: ...
+
+    def log(self, message: str) -> None: ...
 
 
 @dataclass(frozen=True)

@@ -206,8 +206,9 @@ api/
 ```bash
 grep -rn "from infra\|import infra" src/app src/domain        # 空
 grep -rn "from config" src/app src/domain                     # 空
-grep -rn "sqlite3" src/app                                    # 空（2e 完成后）
 ```
+
+`sqlite3` 仍在 `app/review_tasks.py` 中，属于 Stage 3 的存储拆分，完成后才会为空。
 
 ### Stage 3：审查任务存储拆分
 

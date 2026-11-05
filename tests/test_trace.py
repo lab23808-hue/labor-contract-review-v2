@@ -83,7 +83,7 @@ def test_trace_mode_writes_all_artifacts_and_matches_plain_report(
     tmp_path, monkeypatch, capsys
 ):
     monkeypatch.setattr(
-        "app.review._default_client", lambda: FakeLLM(LLM_RESPONSE)
+        "cli.DeepSeekLLMClient", lambda *args, **kwargs: FakeLLM(LLM_RESPONSE)
     )
     monkeypatch.chdir(tmp_path)
     fixture = (FIXTURES / "C-006.txt").resolve()
@@ -187,7 +187,7 @@ def test_trace_counts_only_dropped_events_as_arbitration(
         "other_observations": [],
     }
     monkeypatch.setattr(
-        "app.review._default_client", lambda: FakeLLM(response)
+        "cli.DeepSeekLLMClient", lambda *args, **kwargs: FakeLLM(response)
     )
     monkeypatch.chdir(tmp_path)
     fixture = (FIXTURES / "C-003.txt").resolve()
