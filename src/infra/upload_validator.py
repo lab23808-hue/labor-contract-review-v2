@@ -1,6 +1,6 @@
-"""上传接口的技术约束：文件名、扩展名、大小、文件头与 PDF 结构。
+"""上传文件的技术约束：文件名、扩展名、大小、文件头与 PDF 结构。
 
-属于应用层输入策略，不是劳动法领域知识；DocumentValidator 端口仍在 domain。
+基础设施层实现，通过 domain.ports.UploadValidator 端口被应用层使用。
 """
 
 from dataclasses import dataclass
@@ -24,6 +24,24 @@ class UploadPolicy:
 
 
 DEFAULT_UPLOAD_POLICY = UploadPolicy()
+
+
+class FileUploadValidator:
+    def __init__(
+        self,
+        policy: UploadPolicy = DEFAULT_UPLOAD_POLICY,
+        document_validator: Optional[DocumentValidator] = None,
+    ) -> None:
+        self._policy = policy
+        self._document_validator = document_validator
+
+    def validate(self, filename: str, content: bytes) -> str:
+        return validate_upload(
+            filename,
+            content,
+            self._document_validator,
+            policy=self._policy,
+        )
 
 
 def validate_filename(filename: str) -> None:

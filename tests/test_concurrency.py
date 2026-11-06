@@ -12,6 +12,7 @@ from app.contract_manager import ContractManager
 from core.contract import Contract
 from domain.ports import DuplicateContractError
 from infra.llm_client import FakeLLM
+from infra.upload_validator import FileUploadValidator
 from infra.sqlite_repository import SQLiteContractRepository
 
 TXT = b"same content"
@@ -105,7 +106,9 @@ def test_concurrent_parse_api_returns_202_and_409(tmp_path):
     )
     with TestClient(app) as client:
         manager = ContractManager(
-            app.state.contract_repository, app.state.parsers
+            app.state.contract_repository,
+            app.state.parsers,
+            FileUploadValidator(),
         )
         created = manager.upload("race.txt", TXT)
         barrier = threading.Barrier(2)

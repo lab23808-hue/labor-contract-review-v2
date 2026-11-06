@@ -9,7 +9,6 @@ from app.parsing_service import ParsingService
 from app.review_queue import ReviewQueue
 from app.review_service import ReviewService
 from app.upload_pipeline import UploadPipeline
-from app.upload_policy import UploadPolicy
 from config import settings
 from domain.ports import (
     ContractRepository,
@@ -22,6 +21,7 @@ from infra.pdf_validator import PdfValidator
 from infra.rate_limiter import RequestThrottle, SlidingWindowRateLimiter
 from infra.review_store import ReviewTaskStore
 from infra.sqlite_repository import SQLiteContractRepository
+from infra.upload_validator import FileUploadValidator, UploadPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -133,10 +133,12 @@ def build_container(
     contract_manager = ContractManager(
         contract_repository,
         parsers,
-        validator,
-        policy=UploadPolicy(
-            allowed_extensions=settings.ALLOWED_EXTENSIONS,
-            max_upload_bytes=settings.MAX_UPLOAD_BYTES,
+        FileUploadValidator(
+            policy=UploadPolicy(
+                allowed_extensions=settings.ALLOWED_EXTENSIONS,
+                max_upload_bytes=settings.MAX_UPLOAD_BYTES,
+            ),
+            document_validator=validator,
         ),
     )
     upload_pipeline = UploadPipeline(

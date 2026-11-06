@@ -8,13 +8,8 @@ from core.errors import ContractNotFoundError, InvalidStateError
 from domain.ports import (
     ContractRepository,
     DocumentParser,
-    DocumentValidator,
     DuplicateContractError,
-)
-from app.upload_policy import (
-    DEFAULT_UPLOAD_POLICY,
-    UploadPolicy,
-    validate_upload,
+    UploadValidator,
 )
 
 
@@ -23,13 +18,11 @@ class ContractManager:
         self,
         repository: ContractRepository,
         parsers: Mapping[str, DocumentParser],
-        validator: Optional[DocumentValidator] = None,
-        policy: UploadPolicy = DEFAULT_UPLOAD_POLICY,
+        upload_validator: UploadValidator,
     ) -> None:
         self._repository = repository
         self._parsers = parsers
-        self._validator = validator
-        self._policy = policy
+        self._upload_validator = upload_validator
 
     def upload(
         self,
@@ -37,9 +30,7 @@ class ContractManager:
         content: bytes,
         contract_id: Optional[str] = None,
     ) -> Contract:
-        file_format = validate_upload(
-            filename, content, self._validator, policy=self._policy
-        )
+        file_format = self._upload_validator.validate(filename, content)
 
         sha256 = hashlib.sha256(content).hexdigest()
         existing = self._repository.find_by_sha256(sha256)

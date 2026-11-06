@@ -7,12 +7,13 @@ from app.contract_manager import ContractManager
 from core.errors import ContractNotFoundError, ValidationError
 from domain.ports import ContractRepository, DuplicateContractError
 from fakes import InMemoryContractRepository
+from infra.upload_validator import FileUploadValidator
 
 PDF = b"%PDF-1.7\nhello"
 
 
 def test_upload_returns_contract_and_get_roundtrips():
-    manager = ContractManager(InMemoryContractRepository(), {})
+    manager = ContractManager(InMemoryContractRepository(), {}, FileUploadValidator())
 
     contract = manager.upload("contract.pdf", PDF)
 
@@ -30,7 +31,7 @@ def test_upload_returns_contract_and_get_roundtrips():
 
 
 def test_duplicate_and_validation_failures():
-    manager = ContractManager(InMemoryContractRepository(), {})
+    manager = ContractManager(InMemoryContractRepository(), {}, FileUploadValidator())
     existing = manager.upload("contract.pdf", PDF)
 
     with pytest.raises(DuplicateContractError) as excinfo:
@@ -39,13 +40,13 @@ def test_duplicate_and_validation_failures():
 
     repository = Mock(spec=ContractRepository)
     with pytest.raises(ValidationError):
-        ContractManager(repository, {}).upload("malware.exe", b"content")
+        ContractManager(repository, {}, FileUploadValidator()).upload("malware.exe", b"content")
     repository.exists_by_sha256.assert_not_called()
     repository.save.assert_not_called()
 
 
 def test_exists_and_list_delegate_to_repository():
-    manager = ContractManager(InMemoryContractRepository(), {})
+    manager = ContractManager(InMemoryContractRepository(), {}, FileUploadValidator())
     first = manager.upload("a.txt", b"first")
     second = manager.upload("b.txt", b"second")
 

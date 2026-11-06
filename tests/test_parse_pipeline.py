@@ -19,6 +19,7 @@ from fakes import InMemoryContractRepository
 from infra.llm_client import FakeLLM
 from infra.sqlite_repository import SQLiteContractRepository
 from infra.txt_parser import TxtParser
+from infra.upload_validator import FileUploadValidator
 
 TXT = "劳动合同\n\n第一条　试用期三个月。\n第 1 页\n".encode("utf-8")
 
@@ -139,7 +140,7 @@ def test_reparse_is_idempotent(parse_client):
 def test_reparse_failure_cleans_previous_artifacts():
     repository = InMemoryContractRepository()
     parser = ScriptedParser()
-    manager = ContractManager(repository, {"txt": parser})
+    manager = ContractManager(repository, {"txt": parser}, FileUploadValidator())
     parsing = ParsingService(repository, {"txt": parser})
     contract = manager.upload("contract.txt", b"first")
 
@@ -218,7 +219,7 @@ def test_parse_tasks_are_serialized():
 
 def test_restart_keeps_parsed_pointers(tmp_path):
     repository = SQLiteContractRepository(tmp_path)
-    manager = ContractManager(repository, {"txt": TxtParser()})
+    manager = ContractManager(repository, {"txt": TxtParser()}, FileUploadValidator())
     parsing = ParsingService(repository, {"txt": TxtParser()})
     created = manager.upload("contract.txt", b"first line")
     assert parsing.parse(created.contract_id).status == "parsed"
