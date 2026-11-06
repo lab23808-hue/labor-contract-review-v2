@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Union
+from typing import Collection, Optional, Union
 
 from config import settings
 from core.contract import Contract
@@ -270,16 +270,22 @@ class SQLiteContractRepository:
             raise ArtifactMissingError(f"artifacts 丢失：{relative_path}")
         return path.read_bytes()
 
-    def claim_for_parsing(self, contract_id: str) -> bool:
+    def claim_for_parsing(
+        self, contract_id: str, allowed_statuses: Collection[str]
+    ) -> bool:
+        statuses = tuple(allowed_statuses)
+        if not statuses:
+            return False
+        placeholders = ",".join("?" for _ in statuses)
         with closing(self._connect()) as conn:
             cursor = conn.execute(
-                """
+                f"""
                 UPDATE contracts
                 SET status = 'parsing', error = NULL
                 WHERE contract_id = ?
-                  AND status IN ('uploaded', 'parsed', 'failed')
+                  AND status IN ({placeholders})
                 """,
-                (contract_id,),
+                (contract_id, *statuses),
             )
             conn.commit()
             return cursor.rowcount == 1
@@ -329,12 +335,12 @@ class SQLiteContractRepository:
         finally:
             conn.close()
 
-    def reset_parsing_to_failed(self) -> int:
-        """把 status='parsing' 的记录改为 failed，error 记'服务重启导致解析中断'。返回影响行数。"""
+    def reset_parsing_to_failed(self, reason: str) -> int:
+        """把 status='parsing' 的记录改为 failed，error 记入调用方给出的原因。返回影响行数。"""
         with closing(self._connect()) as conn:
             cursor = conn.execute(
                 "UPDATE contracts SET status = 'failed', error = ? WHERE status = 'parsing'",
-                ("服务重启导致解析中断",),
+                (reason,),
             )
             conn.commit()
             rowcount = cursor.rowcount

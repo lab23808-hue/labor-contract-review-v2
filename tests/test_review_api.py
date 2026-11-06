@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from app_factory import make_app
 from app.review_engine import run_full_review
-from domain.cleaning import clean_text
+from domain.text_normalization import normalize_text
 from domain.extractor import extract_fields
 from infra.docx_parser import DocxParser
 from infra.llm_client import FakeLLM
@@ -155,7 +155,7 @@ def test_upload_result_matches_single_run():
         body = _wait(client, task_id)
         assert body["status"] == "done"
 
-        text = clean_text(
+        text = normalize_text(
             TxtParser().parse("contract.txt", CONTRACT.encode())
         )
         single = run_full_review(

@@ -2,7 +2,7 @@ import pytest
 
 from config import settings
 from core.errors import CorruptedFileError, ValidationError
-from domain.validation import validate_upload
+from app.upload_policy import validate_upload
 from infra.pdf_validator import PdfValidator
 from pdf_fixtures import make_encrypted_pdf, make_valid_pdf
 

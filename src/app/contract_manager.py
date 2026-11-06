@@ -11,7 +11,7 @@ from domain.ports import (
     DocumentValidator,
     DuplicateContractError,
 )
-from domain.validation import (
+from app.upload_policy import (
     DEFAULT_UPLOAD_POLICY,
     UploadPolicy,
     validate_upload,
@@ -79,6 +79,11 @@ class ContractManager:
 
     def delete(self, contract_id: str) -> None:
         self._repository.delete(contract_id)
+
+    def recover_interrupted_parsing(self) -> int:
+        return self._repository.reset_parsing_to_failed(
+            "服务重启导致解析中断"
+        )
 
     def parsed_artifact(self, contract_id: str) -> tuple[str, bytes]:
         contract = self._parsed_contract(contract_id)

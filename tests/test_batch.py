@@ -7,7 +7,7 @@ import pytest
 from app.offline_batch import run_batch
 from app.review_engine import run_full_review
 from cli import main
-from domain.cleaning import clean_text
+from domain.text_normalization import normalize_text
 from domain.extractor import extract_fields
 from infra.llm_client import FakeLLM
 from infra.txt_parser import TxtParser
@@ -89,7 +89,7 @@ def test_batch_matches_single_runs_and_sums_zero_tokens(tmp_path):
 
     for item in summary["items"]:
         path = tmp_path / item["file"]
-        text = clean_text(TxtParser().parse(path.name, path.read_bytes()))
+        text = normalize_text(TxtParser().parse(path.name, path.read_bytes()))
         single = run_full_review(
             text,
             extract_fields(text),

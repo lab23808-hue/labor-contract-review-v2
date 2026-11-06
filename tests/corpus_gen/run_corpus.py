@@ -20,7 +20,7 @@ if str(SRC) not in sys.path:
 
 from app.review_engine import run_full_review
 from config.llm import get_llm_config
-from domain.cleaning import clean_text
+from domain.text_normalization import normalize_text
 from domain.extractor import extract_fields
 from infra.llm_client import DeepSeekLLMClient
 from infra.txt_parser import TxtParser
@@ -47,7 +47,7 @@ def main(argv):
     try:
         for name in sorted(expected):
             path = GENERATED_DIR / name
-            text = clean_text(TxtParser().parse(name, path.read_bytes()))
+            text = normalize_text(TxtParser().parse(name, path.read_bytes()))
             print(f"{name}: calling LLM...", end=" ", flush=True)
             report = run_full_review(
                 text, extract_fields(text), llm_client=client

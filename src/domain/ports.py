@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Optional, Protocol
+from typing import Any, Collection, Optional, Protocol
 
 from core.contract import Contract
 from core.review_task import ReviewTask
@@ -118,8 +118,10 @@ class ContractRepository(Protocol):
 
     def read_artifact(self, relative_path: str) -> bytes: ...
 
-    def claim_for_parsing(self, contract_id: str) -> bool: ...
+    def claim_for_parsing(
+        self, contract_id: str, allowed_statuses: Collection[str]
+    ) -> bool: ...
 
     def delete(self, contract_id: str) -> None: ...
 
-    def reset_parsing_to_failed(self) -> int: ...
+    def reset_parsing_to_failed(self, reason: str) -> int: ...

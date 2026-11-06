@@ -1,4 +1,4 @@
-from domain.cleaning import clean_text
+from domain.text_normalization import normalize_text
 
 
 def test_rule1_removes_page_numbers_residue_and_markdown_symbols():
@@ -11,7 +11,7 @@ def test_rule1_removes_page_numbers_residue_and_markdown_symbols():
         "[链接文字](https://example.com)\n"
     )
 
-    cleaned = clean_text(markdown)
+    cleaned = normalize_text(markdown)
 
     assert "劳动合同" in cleaned
     assert "第一条 试用期三个月。" in cleaned
@@ -26,7 +26,7 @@ def test_rule1_removes_page_numbers_residue_and_markdown_symbols():
 def test_rule2_normalizes_whitespace_and_blank_lines():
     markdown = "第一条　试用期　　三个月。   \n\n\n\n第二条 工资。\n"
 
-    cleaned = clean_text(markdown)
+    cleaned = normalize_text(markdown)
 
     assert "　" not in cleaned
     assert "\n\n\n" not in cleaned
@@ -37,7 +37,7 @@ def test_rule3_removes_ocr_garbage_lines():
     garbage = chr(0xFFFD) * 4 + "乱码"
     markdown = f"第一条 正常内容。\n{garbage}\n第二条 正常内容。"
 
-    cleaned = clean_text(markdown)
+    cleaned = normalize_text(markdown)
 
     assert "第一条 正常内容。" in cleaned
     assert "第二条 正常内容。" in cleaned
@@ -52,7 +52,7 @@ def test_rule4_preserves_clause_numbering_and_heading_order():
         "2. 子条款二"
     )
 
-    cleaned = clean_text(markdown)
+    cleaned = normalize_text(markdown)
 
     assert cleaned.splitlines()[0] == "第一章 总则"
     assert "第一条 本协议自签署之日起生效。" in cleaned

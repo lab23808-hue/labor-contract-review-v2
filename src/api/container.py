@@ -9,13 +9,13 @@ from app.parsing_service import ParsingService
 from app.review_queue import ReviewQueue
 from app.review_service import ReviewService
 from app.upload_pipeline import UploadPipeline
+from app.upload_policy import UploadPolicy
 from config import settings
 from domain.ports import (
     ContractRepository,
     DocumentParser,
     DocumentValidator,
 )
-from domain.validation import UploadPolicy
 from infra.llm_client import DeepSeekLLMClient
 from infra.parsers import build_parsers
 from infra.pdf_validator import PdfValidator

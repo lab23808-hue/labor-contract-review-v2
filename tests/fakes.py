@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Optional
+from typing import Collection, Optional
 
 from core.contract import Contract
 from core.errors import (
@@ -73,9 +73,11 @@ class InMemoryContractRepository:
         except KeyError:
             raise ArtifactMissingError(f"artifacts 丢失：{relative_path}") from None
 
-    def claim_for_parsing(self, contract_id: str) -> bool:
+    def claim_for_parsing(
+        self, contract_id: str, allowed_statuses: Collection[str]
+    ) -> bool:
         contract = self._contracts.get(contract_id)
-        if contract is None or contract.status == "parsing":
+        if contract is None or contract.status not in allowed_statuses:
             return False
         self._contracts[contract_id] = contract.model_copy(
             update={"status": "parsing", "error": None}
@@ -98,12 +100,12 @@ class InMemoryContractRepository:
         for path in stale:
             del self.artifact_files[path]
 
-    def reset_parsing_to_failed(self) -> int:
+    def reset_parsing_to_failed(self, reason: str) -> int:
         count = 0
         for contract_id, contract in list(self._contracts.items()):
             if contract.status == "parsing":
                 self._contracts[contract_id] = contract.model_copy(
-                    update={"status": "failed", "error": "服务重启导致解析中断"}
+                    update={"status": "failed", "error": reason}
                 )
                 count += 1
         return count

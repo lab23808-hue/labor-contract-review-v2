@@ -11,7 +11,7 @@ from api.routes import contracts, review
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
-    app.state.contract_repository.reset_parsing_to_failed()
+    app.state.contract_manager.recover_interrupted_parsing()
     yield
     app.state.review_queue.close()
 

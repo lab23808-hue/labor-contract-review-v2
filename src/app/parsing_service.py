@@ -2,15 +2,15 @@ import hashlib
 from datetime import datetime, timezone
 from typing import Mapping
 
-from core.contract import Contract
+from core.contract import Contract, PARSABLE_STATUSES
 from core.errors import ContractNotFoundError, InvalidStateError
-from domain.cleaning import clean_text
 from domain.ports import (
     ContractRepository,
     DocumentParser,
     ParsingError,
     UnsupportedFormatError,
 )
+from domain.text_normalization import normalize_text
 
 
 def parse_and_clean(
@@ -25,7 +25,7 @@ def parse_and_clean(
             f"不支持的解析格式：{file_format}"
         )
     parsed_markdown = parser.parse(filename, content)
-    return parsed_markdown, clean_text(parsed_markdown)
+    return parsed_markdown, normalize_text(parsed_markdown)
 
 
 class ParsingService:
@@ -38,7 +38,9 @@ class ParsingService:
         self._parsers = parsers
 
     def start(self, contract_id: str) -> Contract:
-        if not self._repository.claim_for_parsing(contract_id):
+        if not self._repository.claim_for_parsing(
+            contract_id, PARSABLE_STATUSES
+        ):
             contract = self._repository.get(contract_id)
             if contract is None:
                 raise ContractNotFoundError(f"合同不存在：{contract_id}")

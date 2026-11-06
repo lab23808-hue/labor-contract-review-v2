@@ -1,11 +1,15 @@
 import ast
 from pathlib import Path
 
-DOMAIN = Path(__file__).resolve().parents[1] / "src" / "domain"
+import pytest
+
+SRC = Path(__file__).resolve().parents[1] / "src"
+LAYERS = [SRC / "domain", SRC / "core"]
 FORBIDDEN_ROOTS = {
     "openai",
     "dotenv",
     "fastapi",
+    "starlette",
     "httpx",
     "requests",
     "mineru",
@@ -28,12 +32,13 @@ def _import_roots(path: Path) -> list[str]:
     return roots
 
 
-def test_domain_has_no_external_sdk_imports():
+@pytest.mark.parametrize("layer", LAYERS, ids=lambda path: path.name)
+def test_layer_has_no_external_sdk_imports(layer: Path):
     offenders = []
-    for path in DOMAIN.rglob("*.py"):
+    for path in layer.rglob("*.py"):
         for root in _import_roots(path):
             if root in FORBIDDEN_ROOTS:
                 offenders.append(
-                    f"{path.relative_to(DOMAIN)} -> {root}"
+                    f"{path.relative_to(layer)} -> {root}"
                 )
     assert offenders == []

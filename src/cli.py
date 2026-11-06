@@ -15,7 +15,7 @@ if str(_SRC) not in sys.path:
 
 from app.offline_batch import run_batch
 from app.review_engine import run_full_review
-from domain.cleaning import clean_text
+from domain.text_normalization import normalize_text
 from domain.extractor import extract_fields
 from infra.llm_client import DeepSeekLLMClient
 from infra.parsers import build_parsers
@@ -102,7 +102,7 @@ def _run_review(args) -> int:
 
     parsers = build_parsers()
     parsed_text = _read_parsed(path, parsers)
-    cleaned_text = clean_text(parsed_text)
+    cleaned_text = normalize_text(parsed_text)
     removed = len(parsed_text) - len(cleaned_text)
     logger.info(
         "",

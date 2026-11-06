@@ -1,3 +1,8 @@
+"""上传接口的技术约束：文件名、扩展名、大小、文件头与 PDF 结构。
+
+属于应用层输入策略，不是劳动法领域知识；DocumentValidator 端口仍在 domain。
+"""
+
 from dataclasses import dataclass
 from typing import Optional
 

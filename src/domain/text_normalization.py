@@ -1,3 +1,10 @@
+"""把解析器产出的 Markdown 规范化为审查使用的纯文本。
+
+输入契约：必须是 parser 适配器输出的 Markdown（含标题/链接/图片语法）。
+输出契约：无分页符、无 HTML/图片残留、空白归一化的纯文本，
+作为 extractor 与 LLM prompt 的唯一输入。
+"""
+
 import re
 
 _PAGE_NUMBER = re.compile(
@@ -15,7 +22,7 @@ _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 _CJK = re.compile(r"[一-鿿]")
 
 
-def clean_text(markdown: str) -> str:
+def normalize_text(markdown: str) -> str:
     text = markdown.lstrip("﻿")
     text = _HTML_RESIDUE.sub("", text)
     text = _IMAGE.sub("", text)

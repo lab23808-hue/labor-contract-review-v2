@@ -6,7 +6,7 @@ import pytest
 
 from app.review_engine import run_full_review
 from config.llm import LLMConfig
-from domain.cleaning import clean_text
+from domain.text_normalization import normalize_text
 from domain.extractor import extract_fields
 from infra.docx_parser import DocxParser
 from infra.llm_client import DeepSeekLLMClient, FakeLLM
@@ -29,7 +29,7 @@ def _cleaned_text(fixture: Path) -> str:
         parsed = TxtParser().parse(fixture.name, content)
     else:
         parsed = DocxParser().parse(fixture.name, content)
-    return clean_text(parsed)
+    return normalize_text(parsed)
 
 
 def _response(text: str) -> dict:

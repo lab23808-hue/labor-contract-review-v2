@@ -3,6 +3,8 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
+PARSABLE_STATUSES = frozenset({"uploaded", "parsed", "failed"})
+
 
 class Contract(BaseModel):
     contract_id: str
