@@ -6,7 +6,9 @@ MAX_UPLOAD_BYTES = int(
 
 ALLOWED_EXTENSIONS = tuple(
     ext.strip().lower().lstrip(".")
-    for ext in os.getenv("ALLOWED_EXTENSIONS", "txt,pdf,docx").split(",")
+    for ext in os.getenv(
+        "ALLOWED_EXTENSIONS", "txt,pdf,docx,jpg,png,jpeg"
+    ).split(",")
     if ext.strip()
 )
 

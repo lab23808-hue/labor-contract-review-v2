@@ -17,6 +17,7 @@ from api.dependencies import get_contract_manager, get_upload_pipeline
 from app.contract_manager import ContractManager
 from app.upload_pipeline import UploadPipeline
 from core.contract import Contract
+from core.errors import ValidationError
 
 router = APIRouter(tags=["contracts"])
 
@@ -67,7 +68,15 @@ async def upload_contract(
         UploadPipeline, Depends(get_upload_pipeline)
     ],
 ) -> Contract:
-    content = await file.read()
+    limit = pipeline.max_upload_bytes
+    size = getattr(file, "size", None)
+    if size is not None and size > limit:
+        raise ValidationError(
+            f"文件大小 {size} 字节超过上限 {limit} 字节"
+        )
+    content = await file.read(limit + 1)
+    if len(content) > limit:
+        raise ValidationError(f"文件大小超过上限 {limit} 字节")
     ip = request.client.host if request.client else "unknown"
     result = pipeline.ingest(file.filename or "", content, ip)
     response.headers["X-RateLimit-Remaining"] = str(
@@ -90,9 +99,37 @@ async def upload_batch(
     ],
 ) -> BatchUploadResponse:
     ip = request.client.host if request.client else "unknown"
-    payload = [
-        (upload.filename or "", await upload.read()) for upload in files
-    ]
+    limit_file = pipeline.max_upload_bytes
+    limit_total = pipeline.max_batch_bytes
+    payload: list[tuple[str, Optional[bytes]]] = []
+    total_bytes = 0
+    for upload in files:
+        filename = upload.filename or ""
+        size = getattr(upload, "size", None)
+        if size is not None:
+            if size > limit_file:
+                payload.append((filename, None))
+                continue
+            if total_bytes + size > limit_total:
+                raise ValidationError(
+                    f"批量上传总大小超过上限 {limit_total} 字节"
+                )
+            payload.append((filename, await upload.read(size)))
+            total_bytes += size
+            continue
+
+        cap = min(limit_file, limit_total - total_bytes)
+        content = await upload.read(cap + 1)
+        if len(content) > limit_file:
+            payload.append((filename, None))
+            continue
+        if total_bytes + len(content) > limit_total:
+            raise ValidationError(
+                f"批量上传总大小超过上限 {limit_total} 字节"
+            )
+        payload.append((filename, content))
+        total_bytes += len(content)
+
     result = pipeline.ingest_batch(payload, ip)
     response.headers["X-RateLimit-Remaining"] = str(
         result.rate_limit_remaining

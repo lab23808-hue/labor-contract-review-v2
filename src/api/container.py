@@ -16,7 +16,7 @@ from domain.ports import (
     DocumentValidator,
 )
 from infra.llm_client import DeepSeekLLMClient
-from infra.parsers import build_parsers
+from infra.parsers import build_parsers, registry_mismatch
 from infra.pdf_validator import PdfValidator
 from infra.rate_limiter import RequestThrottle, SlidingWindowRateLimiter
 from infra.review_store import ReviewTaskStore
@@ -58,8 +58,8 @@ def build_container(
     )
     if parsers is None:
         parsers = build_parsers()
-        missing = sorted(
-            set(settings.ALLOWED_EXTENSIONS) - set(parsers)
+        missing, unused = registry_mismatch(
+            parsers, settings.ALLOWED_EXTENSIONS
         )
         if missing:
             logger.warning(
@@ -67,6 +67,14 @@ def build_container(
                 extra={
                     "event": "config.allowed_without_parser",
                     "missing": missing,
+                },
+            )
+        if unused:
+            logger.warning(
+                "",
+                extra={
+                    "event": "config.parser_not_allowed",
+                    "unused": unused,
                 },
             )
     validator = validator if validator is not None else PdfValidator()
@@ -147,6 +155,7 @@ def build_container(
         review_service,
         SlidingWindowRateLimiter(rate_limit, rate_window),
         asyncio.Semaphore(1),
+        max_upload_bytes=settings.MAX_UPLOAD_BYTES,
         max_batch_files=settings.MAX_BATCH_FILES,
         max_batch_bytes=settings.MAX_BATCH_BYTES,
     )

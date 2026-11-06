@@ -201,6 +201,7 @@ def test_parse_tasks_are_serialized():
             review_service=NoopReview(),
             rate_limiter=None,
             parse_semaphore=asyncio.Semaphore(1),
+            max_upload_bytes=2 * 1024 * 1024,
             max_batch_files=20,
             max_batch_bytes=200 * 1024 * 1024,
         )

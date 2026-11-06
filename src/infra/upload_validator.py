@@ -12,6 +12,9 @@ from domain.ports import DocumentValidator
 _MAGIC_PREFIXES = {
     "pdf": b"%PDF-",
     "docx": b"PK\x03\x04",
+    "jpg": b"\xff\xd8\xff",
+    "jpeg": b"\xff\xd8\xff",
+    "png": b"\x89PNG\r\n\x1a\n",
 }
 
 _INVALID_FILENAME_PARTS = ("/", "\\", "..")
@@ -19,7 +22,14 @@ _INVALID_FILENAME_PARTS = ("/", "\\", "..")
 
 @dataclass(frozen=True)
 class UploadPolicy:
-    allowed_extensions: tuple[str, ...] = ("txt", "pdf", "docx")
+    allowed_extensions: tuple[str, ...] = (
+        "txt",
+        "pdf",
+        "docx",
+        "jpg",
+        "png",
+        "jpeg",
+    )
     max_upload_bytes: int = 2 * 1024 * 1024
 
 

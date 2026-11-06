@@ -2,11 +2,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
+from config import settings
 from infra.llm_client import FakeLLM
 from infra.sqlite_repository import SQLiteContractRepository
 from pdf_fixtures import make_valid_pdf
 
 PDF = make_valid_pdf()
+JPG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01"
 
 
 @pytest.fixture()
@@ -27,6 +29,66 @@ def _post_pdf(client: TestClient, filename: str = "contract.pdf"):
     return client.post(
         "/contracts", files={"file": (filename, PDF, "application/pdf")}
     )
+
+
+def test_post_image_with_valid_magic_is_accepted(client):
+    response = client.post(
+        "/contracts", files={"file": ("scan.jpg", JPG, "image/jpeg")}
+    )
+
+    assert response.status_code == 201
+    assert response.json()["file_format"] == "jpg"
+
+
+def test_post_image_with_bad_magic_is_rejected(client):
+    response = client.post(
+        "/contracts",
+        files={"file": ("scan.png", b"not a png", "image/png")},
+    )
+
+    assert response.status_code == 422
+    assert "文件头" in response.json()["detail"]
+
+
+def test_upload_at_limit_is_accepted(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_UPLOAD_BYTES", 16)
+    app = create_app(
+        repository=SQLiteContractRepository(tmp_path),
+        parsers={},
+        review_client=FakeLLM(
+            {"risks": [], "other_observations": []}
+        ),
+        review_store_path=str(tmp_path / "review.sqlite"),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/contracts",
+            files={"file": ("limit.txt", b"a" * 16, "text/plain")},
+        )
+
+    assert response.status_code == 201
+
+
+def test_upload_over_limit_is_rejected(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_UPLOAD_BYTES", 16)
+    app = create_app(
+        repository=SQLiteContractRepository(tmp_path),
+        parsers={},
+        review_client=FakeLLM(
+            {"risks": [], "other_observations": []}
+        ),
+        review_store_path=str(tmp_path / "review.sqlite"),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/contracts",
+            files={"file": ("big.txt", b"a" * 17, "text/plain")},
+        )
+
+    assert response.status_code == 422
+    assert "上限" in response.json()["detail"]
 
 
 def test_post_contract_returns_201_with_all_fields(client):

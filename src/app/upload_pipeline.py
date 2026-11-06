@@ -46,6 +46,7 @@ class UploadPipeline:
         rate_limiter: RateLimiter,
         parse_semaphore: asyncio.Semaphore,
         *,
+        max_upload_bytes: int,
         max_batch_files: int,
         max_batch_bytes: int,
     ) -> None:
@@ -54,8 +55,17 @@ class UploadPipeline:
         self._review = review_service
         self._rate_limiter = rate_limiter
         self._parse_semaphore = parse_semaphore
+        self._max_upload_bytes = max_upload_bytes
         self._max_batch_files = max_batch_files
         self._max_batch_bytes = max_batch_bytes
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self._max_upload_bytes
+
+    @property
+    def max_batch_bytes(self) -> int:
+        return self._max_batch_bytes
 
     def ingest(
         self, filename: str, content: bytes, client_ip: str
@@ -68,7 +78,7 @@ class UploadPipeline:
 
     def ingest_batch(
         self,
-        files: Sequence[tuple[str, bytes]],
+        files: Sequence[tuple[str, Optional[bytes]]],
         client_ip: str,
     ) -> BatchIngestResult:
         if len(files) > self._max_batch_files:
@@ -81,6 +91,16 @@ class UploadPipeline:
         total_bytes = 0
         remaining = 0
         for filename, content in files:
+            if content is None:
+                items.append(
+                    BatchItem(
+                        filename,
+                        None,
+                        "invalid",
+                        f"文件大小超过上限 {self._max_upload_bytes} 字节",
+                    )
+                )
+                continue
             total_bytes += len(content)
             if total_bytes > self._max_batch_bytes:
                 raise ValidationError(

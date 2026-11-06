@@ -3,9 +3,11 @@ from io import BytesIO
 import pytest
 from docx import Document
 
+from config import settings
 from domain.ports import ParsingError
 from infra.docx_parser import DocxParser
 from infra.mineru_parser import MinerUParser
+from infra.parsers import build_parsers, registry_mismatch
 from infra.txt_parser import TxtParser
 
 
@@ -47,3 +49,25 @@ def test_mineru_parser_reads_markdown_and_errors_when_missing(monkeypatch):
     monkeypatch.setattr(parser, "_run", lambda input_path, output_path: None)
     with pytest.raises(ParsingError):
         parser.parse("contract.pdf", b"%PDF-1.7")
+
+
+def test_registry_mismatch_reports_both_directions():
+    missing, unused = registry_mismatch(
+        {"txt": TxtParser()}, ("txt", "pdf")
+    )
+    assert missing == ["pdf"]
+    assert unused == []
+
+    missing, unused = registry_mismatch(
+        {"txt": TxtParser(), "jpg": TxtParser()}, ("txt",)
+    )
+    assert missing == []
+    assert unused == ["jpg"]
+
+
+def test_default_registry_covers_allowed_extensions():
+    missing, unused = registry_mismatch(
+        build_parsers(), settings.ALLOWED_EXTENSIONS
+    )
+    assert missing == []
+    assert unused == []

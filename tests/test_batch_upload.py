@@ -56,6 +56,37 @@ def test_batch_upload_reports_per_item_status(client):
     assert client.get(f"/contracts/{created_id}").json()["status"] == "parsed"
 
 
+def test_batch_marks_oversized_file_invalid(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "MAX_UPLOAD_BYTES", 16)
+    app = create_app(
+        repository=SQLiteContractRepository(tmp_path),
+        parsers={"txt": TxtParser()},
+        review_client=FakeLLM(
+            {"risks": [], "other_observations": []}
+        ),
+        review_store_path=str(tmp_path / "review.sqlite"),
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/contracts/batch",
+            files=[
+                ("files", ("big.txt", b"a" * 17, "text/plain")),
+                ("files", ("ok.txt", b"ok", "text/plain")),
+            ],
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["status"] for item in body["items"]] == [422, 201]
+    assert body["items"][0]["detail"].startswith("文件大小超过上限")
+    assert body["summary"] == {
+        "total": 2,
+        "succeeded": 1,
+        "failed": 1,
+    }
+
+
 def test_batch_rejects_too_many_files(client):
     files = [
         ("files", (f"f{index}.txt", b"x", "text/plain")) for index in range(21)

@@ -8,6 +8,18 @@ from pdf_fixtures import make_encrypted_pdf, make_valid_pdf
 
 PDF = b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n"
 DOCX = b"PK\x03\x04\x14\x00\x06\x00"
+JPG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01"
+PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+
+
+def test_image_magic_and_jpeg_alias():
+    assert validate_upload("scan.jpg", JPG) == "jpg"
+    assert validate_upload("scan.JPEG", JPG) == "jpeg"
+    assert validate_upload("scan.png", PNG) == "png"
+    with pytest.raises(ValidationError):
+        validate_upload("scan.jpg", b"not an image")
+    with pytest.raises(ValidationError):
+        validate_upload("scan.png", b"not a png")
 
 
 def test_pdf_and_docx_magic_consistency():
