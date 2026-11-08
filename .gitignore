@@ -9,3 +9,21 @@ __pycache__/
 .pytest_cache/
 logs/
 trace_*/
+
+# 本地编辑器 / AI 工具配置
+.claude/
+.vscode/
+
+# 覆盖率与构建产物
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# 日志与系统文件
+*.log
+Thumbs.db
+.DS_Store
